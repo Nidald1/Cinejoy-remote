@@ -58,7 +58,10 @@ jobs:
           CINEJOY_KEY_PASSWORD: ${{ secrets.CINEJOY_KEY_PASSWORD }}
 
       - name: Attach APK to GitHub Release
+        # NOTE: `uses:` steps ignore defaults.run.working-directory, so this
+        # path is repo-root-relative (unlike the `run:` steps above).
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/**/app-*.apk
+          files: android/app/build/outputs/apk/**/app-*.apk
+          fail_on_unmatched_files: true
           generate_release_notes: true
