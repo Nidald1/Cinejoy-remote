@@ -12,7 +12,7 @@ import java.net.URL
 // (HttpURLConnection + org.json, both on every Android).
 // The user creates the repo (see PAIRING.md) and sets these two constants;
 // until then "Check for updates" reports "not configured" instead of failing.
-const val GITHUB_OWNER = "YOUR_GITHUB_USER"
+const val GITHUB_OWNER = "Nidald1"
 const val GITHUB_REPO = "cinejoy-remote"
 
 data class UpdateInfo(
