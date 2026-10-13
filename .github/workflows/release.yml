@@ -29,8 +29,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      # No setup-android action: its default `packages: tools platform-tools`
+      # references the long-removed `tools` package and fails. The runner image
+      # already ships the SDK (ANDROID_HOME set) — install API 36 directly.
       - name: Accept SDK licenses + install API 36
         run: |
           yes | sdkmanager --licenses > /dev/null
