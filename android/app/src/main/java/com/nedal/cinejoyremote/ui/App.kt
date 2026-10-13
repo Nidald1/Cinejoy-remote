@@ -225,7 +225,12 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+            // Morphe styling: flat dark bar with a soft primary pill behind the
+            // active icon and uniform icon/label states.
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 0.dp,
+            ) {
                 TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
                 TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
                 TabItem(nav, route, "events", "Activity", Icons.Rounded.History)
@@ -294,10 +299,20 @@ private fun RowScope.TabItem(
                 restoreState = true
             }
         },
-        icon = { Icon(icon, contentDescription = label) },
-        label = { Text(label) },
+        icon = {
+            Icon(
+                icon,
+                contentDescription = label,
+                modifier = Modifier.size(24.dp),
+            )
+        },
+        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium) },
         colors = NavigationBarItemDefaults.colors(
-            indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            selectedTextColor = MaterialTheme.colorScheme.primary,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
     )
 }

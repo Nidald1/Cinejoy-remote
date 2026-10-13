@@ -35,6 +35,12 @@ data class DownloadTaskDto(
     val server: String? = null,
     val quality: String? = null,
     @SerialName("last_err") val lastErr: String? = null,
+    // v3 mirror columns (migration-v3-cards-sorting.sql). Optional and
+    // defaulted: until the migration runs the mirror omits them and the UI
+    // falls back to the library join / updated_at ordering.
+    val poster: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
 )
 
 @Serializable
@@ -102,6 +108,7 @@ fun DeviceDto.toDomain() = Device(deviceId, name, appVersion, lastSeen)
 fun DownloadTaskDto.toDomain() = DownloadTask(
     taskId, episodeKey, title, episodeLabel, state, percent,
     downloaded, total, speed, eta, source, server, quality, lastErr,
+    poster = poster, createdAt = createdAt, updatedAt = updatedAt,
 )
 fun LibraryShowDto.toDomain() = LibraryShow(showId, type, title, year, episodes, poster, overview, addedAt)
 fun EpisodeDto.toDomain() = Episode(

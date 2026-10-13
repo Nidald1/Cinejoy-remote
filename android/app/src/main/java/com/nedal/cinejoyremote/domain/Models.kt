@@ -24,6 +24,9 @@ data class DownloadTask(
     val server: String?,
     val quality: String?,
     val lastErr: String?,
+    val poster: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
 )
 
 data class LibraryShow(

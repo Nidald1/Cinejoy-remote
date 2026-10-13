@@ -54,6 +54,16 @@ class DownloadsViewModel(
         }.catch { emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // showId -> poster URL, joined client-side from the library mirror so
+    // download cards can show real posters before the v3 mirror columns exist
+    // (episode_key is "showId:season:episode").
+    val posters: StateFlow<Map<String, String>> =
+        devicesVm.selectedDeviceId.flatMapLatest { deviceId ->
+            if (deviceId == null) flowOf(emptyMap()) else mirror.observeLibrary(deviceId)
+                .map { shows -> shows.mapNotNull { s -> s.poster?.let { s.showId to it } }.toMap() }
+        }.catch { emit(emptyMap()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 

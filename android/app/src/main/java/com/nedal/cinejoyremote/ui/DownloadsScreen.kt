@@ -17,14 +17,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.HourglassTop
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,7 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,11 +58,52 @@ import com.nedal.cinejoyremote.domain.Device
 import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
+import coil.compose.AsyncImage
+import java.time.Instant
+import java.time.OffsetDateTime
 
 // Three separate screens inside Downloads — the user picks Active, Failed or
 // Finished up top and only that group's cards render, nothing to scroll past.
 private val SEGMENTS = listOf("Active", "Failed", "Finished")
 private val activeStates = listOf("queued", "resolving", "downloading", "stopping", "paused")
+
+// Sort menu shared by all three segments. The chosen mode lives in
+// rememberSaveable, so it survives switching Active/Failed/Finished and
+// navigating between bottom-nav tabs.
+private val SORT_OPTIONS = listOf(
+    "Name (A–Z)",
+    "Name (Z–A)",
+    "Date added (newest first)",
+    "Date added (oldest first)",
+    "File size (largest first)",
+    "File size (smallest first)",
+)
+
+// task_id is a random UUID and the mirror only tracks updated_at until the v3
+// migration adds created_at — fall back to updated_at so date ordering works
+// today and becomes exact "date added" once migration-v3-cards-sorting.sql runs.
+private fun dateKey(task: DownloadTask): Long {
+    fun parse(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        return runCatching { Instant.parse(raw) }.getOrNull()?.toEpochMilli()
+            ?: runCatching { OffsetDateTime.parse(raw).toInstant().toEpochMilli() }.getOrNull()
+    }
+    return parse(task.createdAt) ?: parse(task.updatedAt) ?: 0L
+}
+
+private fun sizeKey(task: DownloadTask): Long = task.total ?: task.downloaded ?: 0L
+
+private fun sortTasks(tasks: List<DownloadTask>, mode: Int): List<DownloadTask> {
+    val byName = compareBy<DownloadTask>({ it.title.lowercase() }, { it.episodeLabel.lowercase() })
+    return when (mode) {
+        0 -> tasks.sortedWith(byName)
+        1 -> tasks.sortedWith(byName.reversed())
+        2 -> tasks.sortedWith(compareByDescending { dateKey(it) })
+        3 -> tasks.sortedWith(compareBy { dateKey(it) })
+        4 -> tasks.sortedWith(compareByDescending { sizeKey(it) })
+        else -> tasks.sortedWith(compareBy { sizeKey(it) })
+    }
+}
 
 @Composable
 fun DownloadsScreen(
@@ -68,6 +114,7 @@ fun DownloadsScreen(
     val devices by devicesVm.devices.collectAsState()
     val selected by devicesVm.selectedDeviceId.collectAsState()
     val tasks by vm.tasks.collectAsState()
+    val posters by vm.posters.collectAsState()
     val error by vm.error.collectAsState()
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
@@ -77,80 +124,80 @@ fun DownloadsScreen(
 
     var queuePaused by remember { mutableStateOf(false) }
     var segment by rememberSaveable { mutableIntStateOf(0) }
+    var sortMode by rememberSaveable { mutableIntStateOf(2) }
 
     val active = remember(tasks) { tasks.filter { it.state in activeStates } }
     val failed = remember(tasks) { tasks.filter { it.state == "error" } }
     val finished = remember(tasks) { tasks.filter { it.state == "done" } }
     val counts = listOf(active.size, failed.size, finished.size)
-    val shown = when (segment) {
-        0 -> active
-        1 -> failed
-        else -> finished
-    }
+    val shown = sortTasks(
+        when (segment) {
+            0 -> active
+            1 -> failed
+            else -> finished
+        },
+        sortMode,
+    )
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(4.dp))
         DeviceRow(devices, selected, onSelect = devicesVm::select)
 
-        // ---- segment switcher: Active | Failed | Finished
+        // ---- segment switcher: Active | Failed | Finished, with the sort menu
         if (selected != null) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth(),
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.padding(4.dp)) {
-                    SEGMENTS.forEachIndexed { i, label ->
-                        SegmentTab(
-                            label = label,
-                            count = counts[i],
-                            selected = segment == i,
-                            accent = when (i) {
-                                0 -> MaterialTheme.colorScheme.secondary
-                                1 -> MaterialTheme.colorScheme.error
-                                else -> androidx.compose.ui.graphics.Color(0xFF34D399)
-                            },
-                            onClick = { segment = i },
-                            modifier = Modifier.weight(1f),
-                        )
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Row(Modifier.padding(4.dp)) {
+                        SEGMENTS.forEachIndexed { i, label ->
+                            SegmentTab(
+                                label = label,
+                                count = counts[i],
+                                selected = segment == i,
+                                accent = when (i) {
+                                    0 -> MaterialTheme.colorScheme.secondary
+                                    1 -> MaterialTheme.colorScheme.error
+                                    else -> Color(0xFF34D399)
+                                },
+                                onClick = { segment = i },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
+                SortButton(sortMode) { sortMode = it }
+                MoreMenu(
+                    failedCount = failed.size,
+                    finishedCount = finished.size,
+                    onPauseAll = { selected?.let { vm.command(it, "pause-all") } },
+                    onResumeAll = { selected?.let { vm.command(it, "resume-all") } },
+                    onQueueMissing = { selected?.let { vm.command(it, "queue-missing") } },
+                    onQueueClear = { selected?.let { vm.command(it, "queue-clear") } },
+                    onRetryAll = { failed.forEach { t -> selected?.let { vm.command(it, "retry", t.taskId) } } },
+                    onClearFinished = { finished.forEach { t -> selected?.let { vm.command(it, "forget", t.taskId) } } },
+                )
             }
             Spacer(Modifier.height(8.dp))
 
-            // ---- controls that apply to the shown segment
-            when (segment) {
-                0 -> ActiveControls(
-                    selected = selected!!,
-                    vm = vm,
+            // ---- bulk actions live in the ⋮ menu; only the queue toggle stays
+            if (segment == 0) {
+                Spacer(Modifier.height(4.dp))
+                QueueToggle(
                     queuePaused = queuePaused,
                     onQueuePaused = { checked ->
                         queuePaused = checked
                         vm.queuePause(checked)
                     },
                 )
-
-                1 -> if (failed.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = {
-                            failed.forEach { vm.command(selected!!, "retry", it.taskId) }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                    ) { Text("Retry all (${failed.size})", style = MaterialTheme.typography.labelLarge) }
-                }
-
-                2 -> if (finished.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = {
-                            finished.forEach { vm.command(selected!!, "forget", it.taskId) }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                    ) { Text("Clear all (${finished.size})", style = MaterialTheme.typography.labelLarge) }
-                }
+                Spacer(Modifier.height(4.dp))
             }
-            if (segment == 0) Spacer(Modifier.height(4.dp))
         }
 
         LazyColumn(
@@ -209,7 +256,11 @@ fun DownloadsScreen(
                 }
             } else {
                 items(shown, key = { "t-" + it.taskId }) { task ->
-                    TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
+                    TaskCard(
+                        task,
+                        poster = task.poster ?: posters[task.episodeKey.substringBefore(':')],
+                        onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } },
+                    )
                 }
             }
         }
@@ -227,8 +278,8 @@ private fun SegmentTab(
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHighest
-        else androidx.compose.ui.graphics.Color.Transparent,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else Color.Transparent,
         modifier = modifier.clickable(onClick = onClick),
     ) {
         Row(
@@ -249,7 +300,7 @@ private fun SegmentTab(
                 label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = if (selected) MaterialTheme.colorScheme.onSurface
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (count > 0) {
@@ -273,58 +324,89 @@ private fun SegmentTab(
 }
 
 @Composable
-private fun ActiveControls(
-    selected: String,
-    vm: DownloadsViewModel,
+private fun MoreMenu(
+    failedCount: Int,
+    finishedCount: Int,
+    onPauseAll: () -> Unit,
+    onResumeAll: () -> Unit,
+    onQueueMissing: () -> Unit,
+    onQueueClear: () -> Unit,
+    onRetryAll: () -> Unit,
+    onClearFinished: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { open = true },
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = "More download actions",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Pause all downloads") },
+                onClick = { onPauseAll(); open = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Resume all downloads") },
+                onClick = { onResumeAll(); open = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Fix queue missing") },
+                onClick = { onQueueMissing(); open = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Clear all downloads") },
+                onClick = { onQueueClear(); open = false },
+            )
+            // Contextual bulk action for the current segment (replaces the old
+            // per-tab "Retry all" / "Clear all" buttons).
+            if (failedCount > 0) {
+                DropdownMenuItem(
+                    text = { Text("Retry all failed ($failedCount)") },
+                    onClick = { onRetryAll(); open = false },
+                )
+            }
+            if (finishedCount > 0) {
+                DropdownMenuItem(
+                    text = { Text("Remove all finished ($finishedCount)") },
+                    onClick = { onClearFinished(); open = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueToggle(
     queuePaused: Boolean,
     onQueuePaused: (Boolean) -> Unit,
 ) {
-    Column {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(
-                onClick = { vm.command(selected, "pause-all") },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-            ) { Text("Pause all", style = MaterialTheme.typography.labelLarge) }
-            FilledTonalButton(
-                onClick = { vm.command(selected, "resume-all") },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-            ) { Text("Resume all", style = MaterialTheme.typography.labelLarge) }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { vm.command(selected, "queue-missing") },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-            ) { Text("Queue missing", style = MaterialTheme.typography.labelLarge) }
-            OutlinedButton(
-                onClick = { vm.command(selected, "queue-clear") },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-            ) { Text("Clear queue", style = MaterialTheme.typography.labelLarge) }
-        }
-        Spacer(Modifier.height(8.dp))
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.fillMaxWidth(),
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Pause queue", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        "Hold new downloads on the PC",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = queuePaused, onCheckedChange = onQueuePaused)
+            Column(Modifier.weight(1f)) {
+                Text("Pause queue", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Hold new downloads on the PC",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            Switch(checked = queuePaused, onCheckedChange = onQueuePaused)
         }
     }
 }
@@ -353,13 +435,13 @@ fun DeviceRow(devices: List<Device>, selected: String?, onSelect: (String) -> Un
                 Button(
                     onClick = {},
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    modifier = Modifier.height(36.dp),
+                    modifier = Modifier.height(40.dp),
                 ) { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             } else {
                 OutlinedButton(
                     onClick = { onSelect(d.deviceId) },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    modifier = Modifier.height(36.dp),
+                    modifier = Modifier.height(40.dp),
                 ) { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
@@ -378,117 +460,223 @@ private fun taskColor(task: DownloadTask): androidx.compose.ui.graphics.Color =
     }
 
 @Composable
-fun TaskCard(task: DownloadTask, onAction: (String) -> Unit) {
+private fun SortButton(sortMode: Int, onSelect: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { open = true },
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Icon(
+                Icons.Rounded.Sort,
+                contentDescription = "Sort downloads",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            SORT_OPTIONS.forEachIndexed { i, label ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            label,
+                            fontWeight = if (i == sortMode) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (i == sortMode) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    trailingIcon = {
+                        if (i == sortMode) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    },
+                    onClick = { onSelect(i); open = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> Unit) {
     val accent = taskColor(task)
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    when (task.state) {
-                        "done" -> Icons.Rounded.CheckCircle
-                        "error" -> Icons.Rounded.ErrorOutline
-                        else -> Icons.Rounded.HourglassTop
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = accent,
-                )
-                Spacer(Modifier.width(6.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        task.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (task.episodeLabel.isNotBlank() && task.episodeLabel != task.title) {
+        // Frosted top sheen — the Morphe card gradient, kept subtle.
+        Box(
+            Modifier.background(
+                Brush.verticalGradient(
+                    listOf(Color.White.copy(alpha = 0.045f), Color.Transparent),
+                ),
+            ),
+        ) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                PosterThumb(poster, accent)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                task.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (task.episodeLabel.isNotBlank() && task.episodeLabel != task.title) {
+                                Text(
+                                    task.episodeLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        StatusPill(task, accent)
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val sizeText = when {
+                            task.downloaded != null && task.total != null && task.total!! > 0 ->
+                                "${formatBytes(task.downloaded!!)} / ${formatBytes(task.total!!)}"
+                            task.total != null && task.total!! > 0 -> formatBytes(task.total!!)
+                            task.downloaded != null -> formatBytes(task.downloaded!!)
+                            else -> null
+                        }
+                        if (sizeText != null) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            ) {
+                                Text(
+                                    sizeText,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        val bits = buildList {
+                            task.speed?.let { add("${formatBytes(it)}/s") }
+                            task.eta?.let { add(it) }
+                            task.quality?.let { add(it) }
+                            task.source?.let { add(it.uppercase()) }
+                        }
+                        if (bits.isNotEmpty()) {
+                            Text(
+                                bits.joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    if (task.percent != null) {
+                        LinearProgressIndicator(
+                            progress = { (task.percent!! / 100).toFloat() },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                            color = accent,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        )
+                    }
+
+                    task.lastErr?.takeIf { task.state == "error" }?.let {
                         Text(
-                            task.episodeLabel,
+                            it,
+                            color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = accent.copy(alpha = 0.16f),
-                ) {
-                    Text(
-                        task.state + (task.percent?.let { " · ${"%.0f".format(it)}%" } ?: ""),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = accent,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
 
-            if (task.percent != null) {
-                LinearProgressIndicator(
-                    progress = { (task.percent!! / 100).toFloat() },
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                    color = accent,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                )
-            }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        when (task.state) {
+                            "downloading", "queued", "resolving", "stopping" ->
+                                SmallAction("Pause") { onAction("pause") }
 
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val bits = buildList {
-                    task.speed?.let { add("${formatBytes(it)}/s") }
-                    if (task.downloaded != null && task.total != null && task.total!! > 0) {
-                        add("${formatBytes(task.downloaded!!)} of ${formatBytes(task.total!!)}")
-                    } else {
-                        task.downloaded?.let { add(formatBytes(it)) }
-                        task.total?.takeIf { it > 0 }?.let { add(formatBytes(it)) }
+                            "paused" -> {
+                                SmallAction("Resume") { onAction("resume") }
+                                SmallAction("Remove") { onAction("forget") }
+                            }
+
+                            "error" -> SmallAction("Retry") { onAction("retry") }
+                            "done" -> SmallAction("Clear") { onAction("forget") }
+                        }
                     }
-                    task.eta?.let { add(it) }
-                    task.quality?.let { add(it) }
-                    task.source?.let { add(it) }
-                }
-                Text(
-                    bits.joinToString(" · ").ifBlank { task.state },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            task.lastErr?.takeIf { task.state == "error" }?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (task.state) {
-                    "downloading", "queued", "resolving", "stopping" ->
-                        SmallAction("Pause") { onAction("pause") }
-
-                    "paused" -> {
-                        SmallAction("Resume") { onAction("resume") }
-                        SmallAction("Remove") { onAction("forget") }
-                    }
-
-                    "error" -> SmallAction("Retry") { onAction("retry") }
-                    "done" -> SmallAction("Clear") { onAction("forget") }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PosterThumb(poster: String?, accent: Color) {
+    val shape = RoundedCornerShape(14.dp)
+    if (poster.isNullOrBlank()) {
+        Box(
+            Modifier
+                .size(width = 54.dp, height = 81.dp)
+                .clip(shape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(accent.copy(alpha = 0.28f), accent.copy(alpha = 0.10f)),
+                    ),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Movie,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    } else {
+        AsyncImage(
+            model = poster,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(width = 54.dp, height = 81.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+        )
+    }
+}
+
+@Composable
+private fun StatusPill(task: DownloadTask, accent: Color) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = accent.copy(alpha = 0.16f),
+    ) {
+        Text(
+            task.state.replaceFirstChar { it.uppercase() } +
+                (task.percent?.let { " · ${"%.0f".format(it)}%" } ?: ""),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = accent,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
