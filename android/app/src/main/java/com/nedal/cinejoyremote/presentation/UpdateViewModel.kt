@@ -21,7 +21,7 @@ sealed interface UpdateUiState {
     data class Downloading(val info: UpdateInfo, val progress: Float?) : UpdateUiState
     data class NeedsPermission(val info: UpdateInfo) : UpdateUiState
     data class Ready(val info: UpdateInfo) : UpdateUiState
-    data class Error(val message: String) : UpdateUiState
+    data class Error(val message: String, val info: UpdateInfo? = null) : UpdateUiState
 }
 
 class UpdateViewModel : ViewModel() {
@@ -93,7 +93,9 @@ class UpdateViewModel : ViewModel() {
                 _state.value = UpdateUiState.Downloading(info, fraction)
             }
             result.exceptionOrNull()?.let {
-                _state.value = UpdateUiState.Error(it.message ?: "download failed")
+                // Keep the popup open on failure so the reason + retry are
+                // right where the user tapped, not buried in Settings.
+                _state.value = UpdateUiState.Error(it.message ?: "download failed", info)
             }
             // Success: the system install sheet is showing on top of us.
             if (result.isSuccess) _state.value = UpdateUiState.Ready(info)

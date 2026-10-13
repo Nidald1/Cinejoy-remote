@@ -58,6 +58,7 @@ fun UpdateDialog(
         is UpdateUiState.Downloading -> state.info
         is UpdateUiState.NeedsPermission -> state.info
         is UpdateUiState.Ready -> state.info
+        is UpdateUiState.Error -> state.info ?: return
         else -> return
     }
 
@@ -132,7 +133,12 @@ fun UpdateDialog(
 
                         is UpdateUiState.NeedsPermission -> PermissionContent(info, onDownload)
 
-                        is UpdateUiState.Ready -> ReadyContent()
+                        is UpdateUiState.Ready -> ReadyContent(onReopen = { onDownload(info) })
+
+                        is UpdateUiState.Error -> ErrorContent(
+                            message = state.message,
+                            onRetry = { onDownload(info) },
+                        )
 
                         else -> Unit
                     }
@@ -292,7 +298,7 @@ private fun PermissionContent(info: UpdateInfo, onDownload: (UpdateInfo) -> Unit
 }
 
 @Composable
-private fun ReadyContent() {
+private fun ReadyContent(onReopen: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(12.dp))
@@ -300,6 +306,38 @@ private fun ReadyContent() {
             "Ready — confirm the install on the system screen.",
             style = MaterialTheme.typography.bodyMedium,
         )
+    }
+    Spacer(Modifier.height(14.dp))
+    OutlinedButton(
+        onClick = onReopen,
+        modifier = Modifier.fillMaxWidth().height(46.dp),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Text("Open install screen again", style = MaterialTheme.typography.titleSmall)
+    }
+}
+
+@Composable
+private fun ErrorContent(message: String, onRetry: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            message,
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+    }
+    Spacer(Modifier.height(14.dp))
+    Button(
+        onClick = onRetry,
+        modifier = Modifier.fillMaxWidth().height(46.dp),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Text("Try again", style = MaterialTheme.typography.titleSmall)
     }
 }
 
