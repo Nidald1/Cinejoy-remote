@@ -34,6 +34,7 @@ data class LibraryShow(
     val episodes: Int,
     val poster: String? = null,
     val overview: String? = null,
+    val addedAt: String? = null,
 )
 
 data class Episode(

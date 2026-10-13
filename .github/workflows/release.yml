@@ -57,11 +57,22 @@ jobs:
           CINEJOY_KEY_ALIAS: ${{ secrets.CINEJOY_KEY_ALIAS }}
           CINEJOY_KEY_PASSWORD: ${{ secrets.CINEJOY_KEY_PASSWORD }}
 
+      - name: Name the APK CineDownloader-<version>.apk
+        # The release asset is named after the app and version instead of the
+        # default app-release.apk / app-debug.apk.
+        run: |
+          apk=$(find app/build/outputs/apk -name 'app-*.apk' | head -1)
+          test -n "$apk"
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp "$apk" "$RUNNER_TEMP/dist/CineDownloader-$ver.apk"
+          ls -la "$RUNNER_TEMP/dist"
+
       - name: Attach APK to GitHub Release
         # NOTE: `uses:` steps ignore defaults.run.working-directory, so this
         # path is repo-root-relative (unlike the `run:` steps above).
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/**/app-*.apk
+          files: ${{ runner.temp }}/dist/CineDownloader-*.apk
           fail_on_unmatched_files: true
           generate_release_notes: true

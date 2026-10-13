@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -830,6 +833,15 @@ private fun CinejoyPane(
                 )
             }
         }
+        if (selected >= 0) {
+            variants[selected].str("size")?.takeIf { it.isNotBlank() }?.let { size ->
+                Text(
+                    "Estimated size: $size",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Button(
             onClick = {
                 val height = if (selected < 0) null else variants[selected].int("height")
@@ -893,6 +905,16 @@ private fun MovyPane(
                 color = MaterialTheme.colorScheme.tertiary,
             )
         }
+        // The server list scrolls inside a capped-height box so the
+        // quality chips and the Start download button stay visible no
+        // matter how many servers the sweep returned.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
         servers.forEach { srv ->
             val key = srv.str("key") ?: return@forEach
             val ok = srv.bool("ok") == true && srv.arr("sources").isNotEmpty()
@@ -925,12 +947,13 @@ private fun MovyPane(
                             .distinct()
                             .take(4)
                             .forEach { q ->
+                                val size = srv.arr("sources").firstOrNull { it.str("quality") == q }?.str("size")
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 ) {
                                     Text(
-                                        q,
+                                        if (size.isNullOrBlank()) q else "$q · $size",
                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -941,16 +964,27 @@ private fun MovyPane(
                 }
             }
         }
+        }
 
         if (sources.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                labels.distinct().take(6).forEach { label ->
-                    FilterChip(
-                        selected = selectedLabel == label,
-                        onClick = { selectedLabel = label },
-                        label = { Text(label) },
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    labels.distinct().take(6).forEach { label ->
+                        FilterChip(
+                            selected = selectedLabel == label,
+                            onClick = { selectedLabel = label },
+                            label = { Text(label) },
+                        )
+                    }
                 }
+                sources.firstOrNull { it.str("quality") == selectedLabel }?.str("size")
+                    ?.takeIf { it.isNotBlank() }?.let { size ->
+                        Text(
+                            "File size: $size",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
             }
         }
 

@@ -1,5 +1,6 @@
 package com.nedal.cinejoyremote.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,7 +69,7 @@ fun UpdateDialog(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,
         ) {
-            Column {
+            Column(Modifier.animateContentSize()) {
                 // ---- branded header band
                 Box(
                     Modifier
@@ -76,8 +77,8 @@ fun UpdateDialog(
                         .background(
                             Brush.linearGradient(
                                 listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.tertiary,
+                                    com.nedal.cinejoyremote.ui.theme.MorpheBrandBlue,
+                                    com.nedal.cinejoyremote.ui.theme.MorpheBrandTeal,
                                 ),
                             ),
                         )

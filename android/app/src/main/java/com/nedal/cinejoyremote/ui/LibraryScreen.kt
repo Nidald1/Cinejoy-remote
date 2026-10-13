@@ -22,10 +22,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -80,6 +86,20 @@ fun LibraryScreen(
     val refreshing by vm.refreshing.collectAsState()
     val notice by vm.notice.collectAsState()
     var showAdd by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf("newest") }
+
+    val filtered = remember(shows, query, sortMode) {
+        val q = query.trim()
+        val base = if (q.isEmpty()) shows else shows.filter { it.title.contains(q, ignoreCase = true) }
+        when (sortMode) {
+            "name" -> base.sortedBy { it.title.lowercase() }
+            "name_desc" -> base.sortedByDescending { it.title.lowercase() }
+            "oldest" -> base.sortedBy { it.addedAt ?: "" }
+            else -> base.sortedByDescending { it.addedAt ?: "" } // newest first
+        }
+    }
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
     LaunchedEffect(addedShowId) {
@@ -118,6 +138,39 @@ fun LibraryScreen(
                     Box(Modifier.weight(1f)) {
                         DeviceRow(devices, selected, onSelect = devicesVm::select)
                     }
+                    var sortMenu by remember { mutableStateOf(false) }
+                    IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
+                        Icon(
+                            if (searchOpen) Icons.Rounded.Close else Icons.Rounded.Search,
+                            contentDescription = "Search library",
+                        )
+                    }
+                    Box {
+                        IconButton(onClick = { sortMenu = true }) {
+                            Icon(Icons.Rounded.Sort, contentDescription = "Sort library")
+                        }
+                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                            listOf(
+                                "newest" to "Newest first",
+                                "oldest" to "Oldest first",
+                                "name" to "Name A→Z",
+                                "name_desc" to "Name Z→A",
+                            ).forEach { (mode, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (sortMode == mode) {
+                                                Icon(Icons.Rounded.Check, null, Modifier.size(18.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                            }
+                                            Text(label)
+                                        }
+                                    },
+                                    onClick = { sortMode = mode; sortMenu = false },
+                                )
+                            }
+                        }
+                    }
                     IconButton(
                         onClick = { selected?.let { vm.refresh(it) } },
                         enabled = !refreshing && selected != null,
@@ -130,12 +183,37 @@ fun LibraryScreen(
                     }
                 }
             }
-            if (shows.isEmpty()) {
+            if (searchOpen) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    EmptyLibrary(hasDevice = selected != null)
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("Search library") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
-            items(shows, key = { it.showId }) { show ->
+            if (filtered.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    if (shows.isEmpty()) EmptyLibrary(hasDevice = selected != null)
+                    else Column(
+                        Modifier.fillMaxWidth().padding(top = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("🔍", style = MaterialTheme.typography.displayMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text("No matches", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Nothing in your library matches “$query”.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(filtered, key = { it.showId }) { show ->
                 PosterCard(show) { onOpenShow(show.showId) }
             }
         }
@@ -255,7 +333,7 @@ private fun EmptyLibrary(hasDevice: Boolean) {
         Text("Your library is empty", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(4.dp))
         Text(
-            if (hasDevice) "Tap “Add link” and paste a cinejoy.pk watch link. The PC will fetch it and you pick the download source right after."
+            if (hasDevice) "Tap “Add link” and paste any watch link — cinejoy.pk, movy.sx, akwam, themoviedb.org or imdb.com. The PC will fetch it and you pick the download source right after."
             else "Sign the PC app in first — then add movies and series from here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -301,7 +379,7 @@ private fun AddLinkSheet(adding: Boolean, onDismiss: () -> Unit, onAdd: (String)
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "Paste a cinejoy.pk watch link — you will pick the download source next.",
+                    "Paste any watch link — cinejoy.pk, movy.sx, akwam, themoviedb.org or imdb.com. You will pick the download source next.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -309,7 +387,7 @@ private fun AddLinkSheet(adding: Boolean, onDismiss: () -> Unit, onAdd: (String)
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
-                label = { Text("https://cinejoy.pk/watch/…") },
+                label = { Text("https://cinejoy.pk/watch/…  ·  https://akwam.…  ·  imdb.com/title/tt…") },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth(),
