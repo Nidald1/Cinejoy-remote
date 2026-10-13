@@ -1,0 +1,19 @@
+# Machine-local Android SDK path (recreate per machine: sdk.dir=<sdk>)
+android/local.properties
+# Manually downloaded Gradle distributions (CI downloads its own)
+.tooling/
+# Gradle + build outputs
+.gradle/
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/build/
+# Signing keys — NEVER commit. CI gets them from repo secrets.
+*.jks
+*.keystore
+release.keystore
+keystore.properties
+# IDE
+.idea/
+*.iml
+.DS_Store
