@@ -2,6 +2,7 @@ package com.nedal.cinejoyremote.data
 
 import com.nedal.cinejoyremote.domain.Device
 import com.nedal.cinejoyremote.domain.DownloadTask
+import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.domain.MirrorRepository
 import com.nedal.cinejoyremote.domain.RemoteEvent
@@ -18,11 +19,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-private const val POLL_MS = 3000L
+private const val POLL_MS = 1500L
 
 // v1 uses polling flows. Realtime channels can replace poll() internals later
 // without touching ViewModels (see blueprint Step 5).
@@ -68,6 +71,18 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
             }
             order("title", Order.ASCENDING)
         }.decodeList<LibraryShowDto>().map { it.toDomain() }
+    }
+
+    override fun observeEpisodes(deviceId: String, showId: String): Flow<List<Episode>> = poll {
+        client.from("cj_episodes").select {
+            filter {
+                eq("user_id", userId())
+                eq("device_id", deviceId)
+                eq("show_id", showId)
+            }
+            order("season", Order.ASCENDING)
+            order("episode", Order.ASCENDING)
+        }.decodeList<EpisodeDto>().map { it.toDomain() }
     }
 
     override fun observeEvents(deviceId: String): Flow<List<RemoteEvent>> = poll {
@@ -128,5 +143,52 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
                 payload = payload.toPayloadJson(),
             )
         )
+    }
+
+    override suspend fun sendCommandForResult(
+        deviceId: String,
+        action: String,
+        payload: Map<String, String>,
+        timeoutMs: Long,
+    ): Result<JsonObject> = runCatching {
+        val inserted = client.from("cj_commands").insert(
+            CommandInsertDto(
+                userId = userId(),
+                deviceId = deviceId,
+                action = action,
+                payload = payload.toPayloadJson(),
+            )
+        ) {
+            select()
+        }.decodeSingle<CommandRowDto>()
+
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            delay(700)
+            val rows = client.from("cj_commands").select {
+                filter { eq("id", inserted.id) }
+            }.decodeList<CommandRowDto>()
+            val row = rows.firstOrNull() ?: continue
+            when (row.status) {
+                "done" -> {
+                    val res = row.result ?: return@runCatching JsonObject(emptyMap())
+                    val ok = (res["ok"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
+                    if (ok == false) {
+                        val msg = (res["error"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+                            ?: "command failed"
+                        throw IllegalStateException(msg)
+                    }
+                    return@runCatching res
+                }
+                "error" -> {
+                    val res = row.result
+                    val msg = ((res?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull)
+                        ?: "command failed on the PC"
+                    throw IllegalStateException(msg)
+                }
+            }
+            // still pending/running — keep polling
+        }
+        throw IllegalStateException("PC did not answer in time — is the app running?")
     }
 }

@@ -32,6 +32,28 @@ data class LibraryShow(
     val title: String,
     val year: String?,
     val episodes: Int,
+    val poster: String? = null,
+    val overview: String? = null,
+)
+
+data class Episode(
+    val key: String,
+    val showId: String,
+    val season: Int,
+    val episode: Int,
+    val name: String,
+    val still: String? = null,
+    val airDate: String? = null,
+    val rating: Double? = null,
+    val runtime: Int? = null,
+    val state: String = "missing", // done | partial | downloading | missing
+    val downloaded: Long? = null,
+    val total: Long? = null,
+    val watched: Boolean = false,
+    val subs: Int = 0,
+    val arSubs: Int = 0,
+    val pubAr: Int = 0,
+    val needsPub: Boolean = false,
 )
 
 data class RemoteEvent(

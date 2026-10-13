@@ -1,20 +1,42 @@
 package com.nedal.cinejoyremote.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,95 +46,356 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.nedal.cinejoyremote.domain.LibraryShow
+import com.nedal.cinejoyremote.domain.RemoteEvent
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.EventsViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(devicesVm: DevicesViewModel, vm: LibraryViewModel) {
+fun LibraryScreen(
+    devicesVm: DevicesViewModel,
+    vm: LibraryViewModel,
+    factory: androidx.lifecycle.ViewModelProvider.Factory,
+    snackbar: SnackbarHostState,
+    onOpenShow: (String) -> Unit,
+) {
     val devices by devicesVm.devices.collectAsState()
     val selected by devicesVm.selectedDeviceId.collectAsState()
     val shows by vm.shows.collectAsState()
     val error by vm.error.collectAsState()
-    var url by remember { mutableStateOf("") }
+    val adding by vm.adding.collectAsState()
+    val addedShowId by vm.addedShowId.collectAsState()
+    val refreshing by vm.refreshing.collectAsState()
+    val notice by vm.notice.collectAsState()
+    var showAdd by remember { mutableStateOf(false) }
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
+    LaunchedEffect(addedShowId) {
+        addedShowId?.let { id -> vm.clearAdded(); onOpenShow(id) }
+    }
+    LaunchedEffect(error) {
+        error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() }
+    }
+    LaunchedEffect(notice) {
+        notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() }
+    }
 
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
-        DeviceRow(devices, selected, onSelect = devicesVm::select)
-        error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = vm::clearError) { Text("dismiss") }
-        }
-        if (selected != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("cinejoy.pk watch link") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                Button(
-                    onClick = {
-                        vm.command(selected!!, "catalog-add", mapOf("url" to url.trim()))
-                        url = ""
-                    },
-                    enabled = url.isNotBlank(),
+    Scaffold(
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { showAdd = true },
+                icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
+                text = { Text("Add link") },
+            )
+        },
+    ) { inner ->
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 124.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(inner),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 96.dp),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Add")
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(shows, key = { it.showId }) { show ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(show.title, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "${show.type} · ${show.episodes} episode(s)${show.year?.let { " · $it" } ?: ""}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(
-                                onClick = {
-                                    selected?.let { vm.command(it, "queue-missing", mapOf("showId" to show.showId)) }
-                                },
-                            ) {
-                                Text("Queue missing")
-                            }
-                            TextButton(
-                                onClick = {
-                                    selected?.let { vm.command(it, "catalog-remove", mapOf("showId" to show.showId)) }
-                                },
-                            ) {
-                                Text("Remove")
-                            }
+                    Box(Modifier.weight(1f)) {
+                        DeviceRow(devices, selected, onSelect = devicesVm::select)
+                    }
+                    IconButton(
+                        onClick = { selected?.let { vm.refresh(it) } },
+                        enabled = !refreshing && selected != null,
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "Refresh library")
                         }
                     }
                 }
             }
+            if (shows.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyLibrary(hasDevice = selected != null)
+                }
+            }
+            items(shows, key = { it.showId }) { show ->
+                PosterCard(show) { onOpenShow(show.showId) }
+            }
+        }
+    }
+
+    if (showAdd) {
+        AddLinkSheet(
+            adding = adding,
+            onDismiss = { showAdd = false },
+            onAdd = { url ->
+                selected?.let { vm.addShow(it, url) } ?: run { showAdd = false }
+            },
+        )
+    }
+}
+
+// ---------------------------------------------------------------- poster grid
+@Composable
+private fun PosterCard(show: LibraryShow, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            val poster = show.poster
+            if (poster != null) {
+                AsyncImage(
+                    model = poster,
+                    contentDescription = show.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                // Bottom scrim keeps the title readable over any artwork.
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                            ),
+                        ),
+                )
+            } else {
+                Icon(
+                    if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.55f),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp),
+            ) {
+                Text(
+                    if (show.type == "movie") "Movie" else "Series",
+                    Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (poster != null) {
+                Text(
+                    show.title,
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(horizontal = 8.dp, vertical = 7.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        if (show.poster == null) {
+            Text(
+                show.title,
+                Modifier.padding(top = 6.dp),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            Modifier.padding(top = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            show.year?.takeIf { it.isNotBlank() }?.let { MetaChip(it) }
+            MetaChip("${show.episodes} ep")
         }
     }
 }
 
 @Composable
+private fun EmptyLibrary(hasDevice: Boolean) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("🎬", style = MaterialTheme.typography.displayMedium)
+        Spacer(Modifier.height(8.dp))
+        Text("Your library is empty", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (hasDevice) "Tap “Add link” and paste a cinejoy.pk watch link. The PC will fetch it and you pick the download source right after."
+            else "Sign the PC app in first — then add movies and series from here.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+fun MetaChip(text: String) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+// ---------------------------------------------------------------- add link
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddLinkSheet(adding: Boolean, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    var url by remember { mutableStateOf("") }
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = { if (!adding) onDismiss() },
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(
+            Modifier.padding(horizontal = 18.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column {
+                Text(
+                    "Add movie or series",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Paste a cinejoy.pk watch link — you will pick the download source next.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("https://cinejoy.pk/watch/…") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (adding) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(
+                    "The PC is fetching show info…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(
+                    enabled = !adding && url.isNotBlank(),
+                    onClick = { onAdd(url.trim()) },
+                ) { Text(if (adding) "Adding…" else "Add") }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- activity
+@Composable
 fun EventsScreen(vm: EventsViewModel) {
     val events by vm.events.collectAsState()
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(12.dp),
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 300.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
     ) {
-        items(events, key = { it.id }) { event ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(event.title, style = MaterialTheme.typography.titleSmall)
-                    if (event.body.isNotBlank()) Text(event.body, style = MaterialTheme.typography.bodySmall)
-                    Text(event.createdAt, style = MaterialTheme.typography.bodySmall)
+        if (events.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("🔔", style = MaterialTheme.typography.displayMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text("No activity yet", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Download starts, finishes and errors from the PC appear here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+            }
+        }
+        items(events, key = { it.id }) { event -> EventCard(event) }
+    }
+}
+
+@Composable
+private fun EventCard(event: RemoteEvent) {
+    val emoji = when (event.kind) {
+        "finished" -> "✅"
+        "error" -> "⚠️"
+        "started" -> "⏳"
+        else -> "•"
+    }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(emoji, style = MaterialTheme.typography.titleLarge)
+            Column {
+                Text(event.title, style = MaterialTheme.typography.titleSmall)
+                if (event.body.isNotBlank()) {
+                    Text(
+                        event.body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    event.createdAt.replace('T', ' ').take(16),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

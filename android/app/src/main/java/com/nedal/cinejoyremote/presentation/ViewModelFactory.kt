@@ -13,6 +13,10 @@ class AppViewModelFactory(private val devicesVm: DevicesViewModel) : ViewModelPr
             LibraryViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(EventsViewModel::class.java) ->
             EventsViewModel(devicesVm = devicesVm) as T
+        modelClass.isAssignableFrom(ShowDetailViewModel::class.java) ->
+            ShowDetailViewModel(devicesVm = devicesVm) as T
+        modelClass.isAssignableFrom(PcToolsViewModel::class.java) ->
+            PcToolsViewModel(devicesVm = devicesVm) as T
         else -> throw IllegalArgumentException("unknown ${modelClass.name}")
     }
 }

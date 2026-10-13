@@ -13,8 +13,8 @@ android {
         applicationId = "com.nedal.cinejoyremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 500101
-        versionName = "5.0.101"
+        versionCode = 500105
+        versionName = "5.0.105"
     }
 
     // CI signed builds: env vars set by .github/workflows/release.yml.
@@ -69,6 +69,8 @@ dependencies {
     // engine. Without this the app crashes on launch with
     // "Failed to find HTTP client engine implementation".
     implementation(libs.ktor.client.android)
+    implementation(libs.coil.compose)
+    implementation(libs.material.icons.extended)
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.supabase.realtime)
