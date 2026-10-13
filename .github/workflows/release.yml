@@ -34,7 +34,8 @@ jobs:
       # already ships the SDK (ANDROID_HOME set) — install API 36 directly.
       - name: Accept SDK licenses + install API 36
         run: |
-          yes | sdkmanager --licenses > /dev/null
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/gradle-build-action@v3
