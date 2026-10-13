@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -939,27 +940,33 @@ private fun MovyPane(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        srv.arr("sources")
-                            .mapNotNull { it.str("quality") }
-                            .distinct()
-                            .take(4)
-                            .forEach { q ->
-                                val size = srv.arr("sources").firstOrNull { it.str("quality") == q }?.str("size")
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                                ) {
-                                    Text(
-                                        if (size.isNullOrBlank()) q else "$q · $size",
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                        } else {
+                            // Quality+size badges under the name; scrollable so
+                            // long lists never squeeze the server name to pieces.
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                srv.arr("sources")
+                                    .mapNotNull { it.str("quality") }
+                                    .distinct()
+                                    .take(6)
+                                    .forEach { q ->
+                                        val size = srv.arr("sources").firstOrNull { it.str("quality") == q }?.str("size")
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                        ) {
+                                            Text(
+                                                if (size.isNullOrBlank()) q else "$q · $size",
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
                             }
+                        }
                     }
                 }
             }
