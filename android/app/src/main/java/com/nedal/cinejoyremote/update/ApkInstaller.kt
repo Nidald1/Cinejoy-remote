@@ -1,23 +1,24 @@
 package com.nedal.cinejoyremote.update
 
 import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.delay
 import java.io.File
-import kotlin.coroutines.resume
 
 // Downloads the release APK via DownloadManager, then fires the system install
-// prompt through FileProvider. Returns after the install screen opens
-// (user confirms there — we cannot and should not install silently).
+// prompt through FileProvider. Progress is polled straight from the
+// DownloadManager row (0..1, or null while the total size is unknown), which
+// also surfaces the real failure reason instead of a generic "did not finish".
 object ApkInstaller {
+
+    private const val POLL_MS = 300L
+    private const val TIMEOUT_MS = 15 * 60 * 1000L
 
     fun canInstall(ctx: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -31,7 +32,11 @@ object ApkInstaller {
             data = Uri.parse("package:${ctx.packageName}")
         }
 
-    suspend fun downloadAndPrompt(ctx: Context, info: UpdateInfo): Result<Unit> {
+    suspend fun downloadAndPrompt(
+        ctx: Context,
+        info: UpdateInfo,
+        onProgress: (Float?) -> Unit = {},
+    ): Result<Unit> {
         return try {
             val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.cacheDir
             val file = File(dir, info.assetName)
@@ -47,27 +52,47 @@ object ApkInstaller {
             val manager = ctx.getSystemService(DownloadManager::class.java)
                 ?: return Result.failure(IllegalStateException("download service unavailable"))
             val downloadId = manager.enqueue(request)
+            val query = DownloadManager.Query().setFilterById(downloadId)
 
-            // Suspend until this exact download completes.
-            val success = suspendCancellableCoroutine { cont ->
-                val receiver = object : BroadcastReceiver() {
-                    override fun onReceive(c: Context, intent: Intent) {
-                        if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
-                        try {
-                            c.unregisterReceiver(this)
-                        } catch (_: IllegalArgumentException) {
+            // Poll until the row reports success/failure (also feeds progress).
+            val started = System.currentTimeMillis()
+            var lastUpdate = 0L
+            while (true) {
+                if (System.currentTimeMillis() - started > TIMEOUT_MS) {
+                    manager.remove(downloadId)
+                    return Result.failure(IllegalStateException("download timed out"))
+                }
+                var status = -1
+                var reason = -1
+                manager.query(query)?.use { c ->
+                    if (c.moveToFirst()) {
+                        status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                        reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                        if (status == DownloadManager.STATUS_RUNNING ||
+                            status == DownloadManager.STATUS_PENDING
+                        ) {
+                            val bytes = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                            val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdate > 150) {
+                                lastUpdate = now
+                                onProgress(if (total > 0) (bytes.toDouble() / total).toFloat().coerceIn(0f, 1f) else null)
+                            }
                         }
-                        if (cont.isActive) cont.resume(true)
                     }
                 }
-                ctx.registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-                cont.invokeOnCancellation {
-                    runCatching { ctx.unregisterReceiver(receiver) }
+                when (status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> break
+                    DownloadManager.STATUS_FAILED -> {
+                        return Result.failure(IllegalStateException(failureReason(reason)))
+                    }
                 }
+                delay(POLL_MS)
             }
-            if (!success || !file.exists()) {
+            if (!file.exists()) {
                 return Result.failure(IllegalStateException("download did not complete"))
             }
+            onProgress(1f)
 
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
             val install = Intent(Intent.ACTION_VIEW).apply {
@@ -79,5 +104,13 @@ object ApkInstaller {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun failureReason(reason: Int): String = when (reason) {
+        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "not enough storage on the phone"
+        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "storage not available"
+        DownloadManager.ERROR_CANNOT_RESUME -> "download interrupted — try again"
+        DownloadManager.ERROR_FILE_ERROR -> "could not save the file"
+        else -> "download failed (code $reason)"
     }
 }

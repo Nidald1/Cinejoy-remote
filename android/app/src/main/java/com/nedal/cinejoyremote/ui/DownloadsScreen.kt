@@ -1,6 +1,7 @@
 package com.nedal.cinejoyremote.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,8 +37,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +53,11 @@ import com.nedal.cinejoyremote.domain.Device
 import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
+
+// Three separate screens inside Downloads — the user picks Active, Failed or
+// Finished up top and only that group's cards render, nothing to scroll past.
+private val SEGMENTS = listOf("Active", "Failed", "Finished")
+private val activeStates = listOf("queued", "resolving", "downloading", "stopping", "paused")
 
 @Composable
 fun DownloadsScreen(
@@ -68,79 +76,86 @@ fun DownloadsScreen(
     }
 
     var queuePaused by remember { mutableStateOf(false) }
+    var segment by rememberSaveable { mutableIntStateOf(0) }
+
+    val active = remember(tasks) { tasks.filter { it.state in activeStates } }
+    val failed = remember(tasks) { tasks.filter { it.state == "error" } }
+    val finished = remember(tasks) { tasks.filter { it.state == "done" } }
+    val counts = listOf(active.size, failed.size, finished.size)
+    val shown = when (segment) {
+        0 -> active
+        1 -> failed
+        else -> finished
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(4.dp))
         DeviceRow(devices, selected, onSelect = devicesVm::select)
 
+        // ---- segment switcher: Active | Failed | Finished
         if (selected != null) {
-            // Queue controls — same executors as the desktop toolbar.
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    onClick = { vm.command(selected!!, "pause-all") },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                ) { Text("Pause all", style = MaterialTheme.typography.labelLarge) }
-                FilledTonalButton(
-                    onClick = { vm.command(selected!!, "resume-all") },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                ) { Text("Resume all", style = MaterialTheme.typography.labelLarge) }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { vm.command(selected!!, "queue-missing") },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                ) { Text("Queue missing", style = MaterialTheme.typography.labelLarge) }
-                OutlinedButton(
-                    onClick = { vm.command(selected!!, "queue-clear") },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
-                ) { Text("Clear queue", style = MaterialTheme.typography.labelLarge) }
-            }
-            Spacer(Modifier.height(6.dp))
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Pause queue", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "Hold new downloads on the PC",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Row(Modifier.padding(4.dp)) {
+                    SEGMENTS.forEachIndexed { i, label ->
+                        SegmentTab(
+                            label = label,
+                            count = counts[i],
+                            selected = segment == i,
+                            accent = when (i) {
+                                0 -> MaterialTheme.colorScheme.secondary
+                                1 -> MaterialTheme.colorScheme.error
+                                else -> androidx.compose.ui.graphics.Color(0xFF34D399)
+                            },
+                            onClick = { segment = i },
+                            modifier = Modifier.weight(1f),
                         )
                     }
-                    Switch(
-                        checked = queuePaused,
-                        onCheckedChange = { checked ->
-                            queuePaused = checked
-                            vm.queuePause(checked)
-                        },
-                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
+
+            // ---- controls that apply to the shown segment
+            when (segment) {
+                0 -> ActiveControls(
+                    selected = selected!!,
+                    vm = vm,
+                    queuePaused = queuePaused,
+                    onQueuePaused = { checked ->
+                        queuePaused = checked
+                        vm.queuePause(checked)
+                    },
+                )
+
+                1 -> if (failed.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = {
+                            failed.forEach { vm.command(selected!!, "retry", it.taskId) }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+                    ) { Text("Retry all (${failed.size})", style = MaterialTheme.typography.labelLarge) }
+                }
+
+                2 -> if (finished.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = {
+                            finished.forEach { vm.command(selected!!, "forget", it.taskId) }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+                    ) { Text("Clear all (${finished.size})", style = MaterialTheme.typography.labelLarge) }
+                }
+            }
+            if (segment == 0) Spacer(Modifier.height(4.dp))
         }
 
-        // Grouped view: live work on top, problems next, history last.
-        val active = tasks.filter { it.state in inStates }
-        val paused = tasks.filter { it.state == "paused" }
-        val failed = tasks.filter { it.state == "error" }
-        val finished = tasks.filter { it.state == "done" }
-        val other = tasks.filter {
-            it.state !in inStates && it.state != "paused" && it.state != "error" && it.state != "done"
-        }
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
         ) {
             if (tasks.isEmpty()) {
                 item(key = "empty") {
@@ -158,34 +173,42 @@ fun DownloadsScreen(
                         )
                     }
                 }
-            }
-            if (active.isNotEmpty()) {
-                item(key = "h-active") { SectionHeader("Active", active.size, MaterialTheme.colorScheme.secondary) }
-                items(active, key = { "a-" + it.taskId }) { task ->
-                    TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
+            } else if (shown.isEmpty()) {
+                item(key = "empty-seg") {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 64.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            when (segment) {
+                                0 -> "🎬"
+                                1 -> "✅"
+                                else -> "📦"
+                            },
+                            style = MaterialTheme.typography.displayMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            when (segment) {
+                                0 -> "Nothing downloading"
+                                1 -> "Nothing failed"
+                                else -> "Nothing finished yet"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            when (segment) {
+                                0 -> "Queued downloads run here live with speed and progress."
+                                1 -> "Failed downloads land here with the reason and a Retry button."
+                                else -> "Completed downloads collect here with their final size."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
-            }
-            if (paused.isNotEmpty()) {
-                item(key = "h-paused") { SectionHeader("Paused", paused.size, androidx.compose.ui.graphics.Color(0xFFFBBF24)) }
-                items(paused, key = { "p-" + it.taskId }) { task ->
-                    TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
-                }
-            }
-            if (failed.isNotEmpty()) {
-                item(key = "h-failed") { SectionHeader("Failed", failed.size, MaterialTheme.colorScheme.error) }
-                items(failed, key = { "e-" + it.taskId }) { task ->
-                    TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
-                }
-            }
-            if (other.isNotEmpty()) {
-                item(key = "h-other") { SectionHeader("Other", other.size, androidx.compose.ui.graphics.Color(0xFF94A3B8)) }
-                items(other, key = { "o-" + it.taskId }) { task ->
-                    TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
-                }
-            }
-            if (finished.isNotEmpty()) {
-                item(key = "h-finished") { SectionHeader("Finished", finished.size, androidx.compose.ui.graphics.Color(0xFF34D399)) }
-                items(finished, key = { "d-" + it.taskId }) { task ->
+            } else {
+                items(shown, key = { "t-" + it.taskId }) { task ->
                     TaskCard(task, onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } })
                 }
             }
@@ -193,26 +216,116 @@ fun DownloadsScreen(
     }
 }
 
-private val inStates = listOf("queued", "resolving", "downloading", "stopping")
+@Composable
+private fun SegmentTab(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHighest
+        else androidx.compose.ui.graphics.Color.Transparent,
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            if (count > 0) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) accent else MaterialTheme.colorScheme.outline),
+                )
+                Spacer(Modifier.width(5.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (count > 0) {
+                Spacer(Modifier.width(5.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (selected) accent.copy(alpha = 0.18f)
+                    else MaterialTheme.colorScheme.surfaceContainerHighest,
+                ) {
+                    Text(
+                        count.toString(),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
-private fun SectionHeader(title: String, count: Int, accent: androidx.compose.ui.graphics.Color) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(accent),
-        )
-        Text(
-            "$title · $count",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
+private fun ActiveControls(
+    selected: String,
+    vm: DownloadsViewModel,
+    queuePaused: Boolean,
+    onQueuePaused: (Boolean) -> Unit,
+) {
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                onClick = { vm.command(selected, "pause-all") },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+            ) { Text("Pause all", style = MaterialTheme.typography.labelLarge) }
+            FilledTonalButton(
+                onClick = { vm.command(selected, "resume-all") },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+            ) { Text("Resume all", style = MaterialTheme.typography.labelLarge) }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { vm.command(selected, "queue-missing") },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+            ) { Text("Queue missing", style = MaterialTheme.typography.labelLarge) }
+            OutlinedButton(
+                onClick = { vm.command(selected, "queue-clear") },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 0.dp),
+            ) { Text("Clear queue", style = MaterialTheme.typography.labelLarge) }
+        }
+        Spacer(Modifier.height(8.dp))
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Pause queue", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "Hold new downloads on the PC",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = queuePaused, onCheckedChange = onQueuePaused)
+            }
+        }
     }
 }
 

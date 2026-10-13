@@ -36,12 +36,14 @@ import com.nedal.cinejoyremote.presentation.AuthViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
 import com.nedal.cinejoyremote.presentation.UpdateUiState
 import com.nedal.cinejoyremote.presentation.UpdateViewModel
-import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
-fun SettingsScreen(authVm: AuthViewModel, pcTools: PcToolsViewModel) {
+fun SettingsScreen(
+    authVm: AuthViewModel,
+    pcTools: PcToolsViewModel,
+    updateVm: UpdateViewModel,
+) {
     val context = LocalContext.current
-    val updateVm: UpdateViewModel = viewModel()
     val authState by authVm.authState.collectAsState(initial = AuthState.Loading)
     val updateState by updateVm.state.collectAsState()
 
@@ -129,11 +131,11 @@ fun SettingsScreen(authVm: AuthViewModel, pcTools: PcToolsViewModel) {
             )
             Spacer(Modifier.height(8.dp))
             when (val s = updateState) {
-                is UpdateUiState.Idle -> Button(onClick = { updateVm.check(context) }) {
-                    Text("Check for updates")
+                is UpdateUiState.Idle,
+                is UpdateUiState.Checking,
+                -> Button(onClick = { updateVm.check(context) }, enabled = s !is UpdateUiState.Checking) {
+                    Text(if (s is UpdateUiState.Checking) "Checking…" else "Check for updates")
                 }
-
-                is UpdateUiState.Checking -> LinearProgressIndicator(Modifier.fillMaxWidth())
 
                 is UpdateUiState.UpToDate -> {
                     Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
@@ -142,22 +144,17 @@ fun SettingsScreen(authVm: AuthViewModel, pcTools: PcToolsViewModel) {
 
                 is UpdateUiState.Available -> {
                     Text("Update ${s.info.version} available.", style = MaterialTheme.typography.bodySmall)
-                    if (s.info.notes.isNotBlank()) {
-                        Text(
-                            s.info.notes.take(500),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                     Spacer(Modifier.height(4.dp))
-                    Button(onClick = { updateVm.downloadAndInstall(context, s.info) }) {
-                        Text("Download & install")
+                    Button(onClick = updateVm::showPopup) {
+                        Text("View update")
                     }
                 }
 
-                is UpdateUiState.Downloading -> {
-                    Text("Downloading update…", style = MaterialTheme.typography.bodySmall)
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                is UpdateUiState.Downloading,
+                is UpdateUiState.NeedsPermission,
+                is UpdateUiState.Ready,
+                -> Button(onClick = updateVm::showPopup) {
+                    Text("View update")
                 }
 
                 is UpdateUiState.Error -> {

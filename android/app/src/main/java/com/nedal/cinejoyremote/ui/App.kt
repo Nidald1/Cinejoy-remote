@@ -68,6 +68,7 @@ import com.nedal.cinejoyremote.presentation.LibraryViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
 import com.nedal.cinejoyremote.presentation.ServiceLocator
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
+import com.nedal.cinejoyremote.presentation.UpdateViewModel
 import com.nedal.cinejoyremote.notifications.EventNotifier
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -106,6 +107,13 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var backAt by remember { mutableLongStateOf(0L) }
+
+    // Update flow: silent check on launch; when a newer release exists on
+    // GitHub (and wasn't dismissed for that exact version) the popup shows.
+    val updateVm: UpdateViewModel = viewModel()
+    val updateState by updateVm.state.collectAsState()
+    val updatePopup by updateVm.popupVisible.collectAsState()
+    LaunchedEffect(Unit) { updateVm.autoCheck(context) }
 
     // Standard Android back model:
     //   detail page      -> one step back (show detail -> library)
@@ -250,9 +258,20 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 EventsScreen(vm)
             }
             composable("settings") {
-                SettingsScreen(authVm, viewModel(factory = factory))
+                SettingsScreen(authVm, viewModel(factory = factory), updateVm)
             }
         }
+    }
+
+    if (updatePopup) {
+        UpdateDialog(
+            state = updateState,
+            installedVersion = updateVm.versionName(context),
+            onDownload = { info -> updateVm.downloadAndInstall(context, info) },
+            onCancel = { info -> updateVm.cancelDownload(info) },
+            onDismiss = { version -> updateVm.dismissPopup(context, version) },
+            onRetry = { updateVm.check(context) },
+        )
     }
 }
 
