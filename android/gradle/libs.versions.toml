@@ -7,6 +7,7 @@ compose-bom = "2025.04.01"
 lifecycle = "2.9.1"
 navigation = "2.9.0"
 coroutines = "1.10.2"
+ktor = "3.2.3"
 datastore = "1.1.7"
 activity-compose = "1.10.1"
 androidx-core = "1.17.0"
@@ -27,6 +28,7 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt", version.ref = "supabase" }
 supabase-auth = { module = "io.github.jan-tennert.supabase:auth-kt", version.ref = "supabase" }
 supabase-realtime = { module = "io.github.jan-tennert.supabase:realtime-kt", version.ref = "supabase" }
+ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -13,8 +13,8 @@ android {
         applicationId = "com.nedal.cinejoyremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 500100
-        versionName = "5.0.100"
+        versionCode = 500101
+        versionName = "5.0.101"
     }
 
     // CI signed builds: env vars set by .github/workflows/release.yml.
@@ -65,6 +65,10 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
+    // Ktor HTTP engine (Android): supabase-kt brings ktor-client-core but no
+    // engine. Without this the app crashes on launch with
+    // "Failed to find HTTP client engine implementation".
+    implementation(libs.ktor.client.android)
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.supabase.realtime)
