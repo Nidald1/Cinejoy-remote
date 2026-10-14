@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -119,6 +120,11 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val nav = rememberNavController()
     val devicesVm: DevicesViewModel = viewModel()
     val factory = remember(devicesVm) { AppViewModelFactory(devicesVm) }
+    // One RequestsViewModel for the whole shell: the Notifications tab badge
+    // needs the pending count even while another tab is open, and the
+    // notifications + Seerr pages should share busy/notice state anyway.
+    val requestsVm: RequestsViewModel = viewModel(factory = factory)
+    val pendingRequests by requestsVm.requests.collectAsState()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: "downloads"
     val context = LocalContext.current
@@ -265,7 +271,10 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             ) {
                 TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
                 TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
-                TabItem(nav, route, "notifications", "Notifications", Icons.Rounded.Notifications)
+                TabItem(
+                    nav, route, "notifications", "Notifications", Icons.Rounded.Notifications,
+                    badge = pendingRequests.size,
+                )
                 TabItem(nav, route, "settings", "Settings", Icons.Rounded.Settings)
             }
         },
@@ -310,9 +319,8 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 SharedTitleScreen(devicesVm, TmdbRef(type, id), snackbar)
             }
             composable("notifications") {
-                val vm: RequestsViewModel = viewModel(factory = factory)
                 NotificationsScreen(
-                    vm,
+                    requestsVm,
                     snackbar,
                     onAcceptedShow = { showId ->
                         // Accepted: jump to the title and let its page open the
@@ -324,8 +332,7 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 )
             }
             composable("seerr") {
-                val vm: RequestsViewModel = viewModel(factory = factory)
-                SeerrScreen(vm, snackbar) { nav.popBackStack() }
+                SeerrScreen(requestsVm, snackbar) { nav.popBackStack() }
             }
             composable("settings") {
                 SettingsScreen(
@@ -358,6 +365,7 @@ private fun RowScope.TabItem(
     route: String,
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    badge: Int = 0,
 ) {
     // The show detail page belongs to the Library tab visually.
     val selected = current == route || (route == "library" && current.startsWith("show/"))
@@ -371,6 +379,12 @@ private fun RowScope.TabItem(
             }
         },
         icon = {
+            // Pending Seerr requests waiting for a decision.
+            if (badge > 0) {
+                Badge {
+                    Text(if (badge > 9) "9+" else badge.toString())
+                }
+            }
             Icon(
                 icon,
                 contentDescription = label,

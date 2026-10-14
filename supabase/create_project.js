@@ -1,15 +1,18 @@
 'use strict';
 // Creates the standalone CineJoy Supabase project via the Management API.
-// Token is read from the existing POS tool file at runtime, never printed.
+// Token comes from the environment — never hardcoded, never printed.
+//   set SUPABASE_ACCESS_TOKEN=<personal access token>
+//   (create one at https://supabase.com/dashboard/account/tokens)
 // Writes non-secret metadata to project.json, secrets to .local-secrets
 // (both stay on this machine; only ref+url are needed by the apps).
 const fs = require('fs');
 const crypto = require('crypto');
 
-const TOOL_SRC = fs.readFileSync(
-  'D:/From Desktop/New folder (2) - Copy/tools/sb_sql.js', 'utf8');
-const TOKEN = (TOOL_SRC.match(/sbp_[A-Za-z0-9]+/) || [])[0];
-if (!TOKEN) { console.error('token not found'); process.exit(1); }
+const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
+if (!TOKEN) {
+  console.error('SUPABASE_ACCESS_TOKEN is not set — export it or set it in .env before running.');
+  process.exit(1);
+}
 const H = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
 const API = 'https://api.supabase.com/v1';
 

@@ -184,6 +184,18 @@ class LibraryViewModel(
         }
     }
 
+    // Long-press on a poster: remove the title from the PC's catalog. Files
+    // on disk are kept; the mirrored row disappears once the PC re-mirrors
+    // (catalog-remove broadcasts catalog-changed).
+    fun removeShow(deviceId: String, showId: String) = viewModelScope.launch {
+        val r = mirror.sendCommandForResult(
+            deviceId, "catalog-remove", mapOf("showId" to showId), timeoutMs = 30_000,
+        )
+        val err = r.exceptionOrNull()
+        if (err != null) _error.value = err.message
+        else _notice.value = "Removed from the library"
+    }
+
     fun clearAdded() {
         _addedShowId.value = null
     }
@@ -530,6 +542,27 @@ class RequestsViewModel(
 
     private val _busy = MutableStateFlow<String?>(null)
     val busy: StateFlow<String?> = _busy // reqId currently being decided
+
+    // Pull-to-refresh: the list itself is a live mirror, so the only real
+    // "refresh" is asking the PC to re-scan the Seerr inbox right now — that
+    // both posts new requests and clears decided ones immediately.
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing
+
+    fun refresh() = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value
+        if (d == null) {
+            _error.value = "No PC selected"
+            return@launch
+        }
+        _refreshing.value = true
+        try {
+            val r = mirror.sendCommandForResult(d, "seerr-scan", emptyMap(), timeoutMs = 30_000)
+            r.exceptionOrNull()?.let { _error.value = it.message ?: "the PC did not answer" }
+        } finally {
+            _refreshing.value = false
+        }
+    }
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error

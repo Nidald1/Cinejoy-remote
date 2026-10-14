@@ -19,12 +19,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,6 +51,7 @@ import com.nedal.cinejoyremote.presentation.RequestsViewModel
 // are chosen in the normal download picker. Reject declines it in Seerr too
 // so whoever asked can request it again. The row disappears as soon as it is
 // decided, because the PC deletes the mirrored event.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationsScreen(
     vm: RequestsViewModel,
@@ -61,6 +64,7 @@ fun NotificationsScreen(
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
     val acceptedShow by vm.acceptedShow.collectAsState()
+    val refreshing by vm.refreshing.collectAsState()
 
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
@@ -68,55 +72,65 @@ fun NotificationsScreen(
         acceptedShow?.let { onAcceptedShow(it); vm.clearAcceptedShow() }
     }
 
-    if (requests.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(32.dp),
-            ) {
-                Text("🔔", style = MaterialTheme.typography.displayMedium)
-                Spacer(Modifier.height(8.dp))
-                Text("Nothing waiting", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "When someone requests a movie or a series through Seerr it\n" +
-                        "appears here, and you decide whether to download it.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(16.dp))
-                SeerrOpenButton(onOpenSeerr)
-            }
-        }
-        return
-    }
-
-    LazyColumn(
+    // Pull down to make the PC re-scan the Seerr inbox right now — new
+    // requests post immediately and decided cards clear without waiting for
+    // the next background pass. The empty state pulls too: that is exactly
+    // when a refresh is most wanted.
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = { vm.refresh() },
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item(key = "seerr-header") {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "Seerr requests",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                SeerrOpenButton(onOpenSeerr)
+        if (requests.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(32.dp),
+                ) {
+                    Text("🔔", style = MaterialTheme.typography.displayMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Nothing waiting", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "When someone requests a movie or a series through Seerr it\n" +
+                            "appears here, and you decide whether to download it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    SeerrOpenButton(onOpenSeerr)
+                }
             }
+            return@PullToRefreshBox
         }
-        items(requests, key = { it.rowId }) { req ->
-            RequestCard(
-                req = req,
-                busy = busy == req.reqId,
-                onAccept = { vm.accept(req) },
-                onReject = { vm.reject(req) },
-            )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item(key = "seerr-header") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Seerr requests",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SeerrOpenButton(onOpenSeerr)
+                }
+            }
+            items(requests, key = { it.rowId }) { req ->
+                RequestCard(
+                    req = req,
+                    busy = busy == req.reqId,
+                    onAccept = { vm.accept(req) },
+                    onReject = { vm.reject(req) },
+                )
+            }
         }
     }
 }

@@ -1,15 +1,17 @@
 'use strict';
 // Runs SQL against a Supabase project via the Management API.
-// Reuses the existing POS tooling's token WITHOUT printing it.
+// Token comes from the environment — never hardcoded, never printed.
+//   set SUPABASE_ACCESS_TOKEN=<personal access token>
+//   (create one at https://supabase.com/dashboard/account/tokens)
 // Usage: node sb_run.js <project-ref> "<sql>" | --file <path>
 const fs = require('fs');
 const path = require('path');
-const { runSql: _unused } = require('D:/From Desktop/New folder (2) - Copy/tools/sb_sql.js');
 
-const TOOL_SRC = fs.readFileSync(
-  'D:/From Desktop/New folder (2) - Copy/tools/sb_sql.js', 'utf8');
-const TOKEN = (TOOL_SRC.match(/sbp_[A-Za-z0-9]+/) || [])[0];
-if (!TOKEN) { console.error('token not found'); process.exit(1); }
+const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
+if (!TOKEN) {
+  console.error('SUPABASE_ACCESS_TOKEN is not set — export it or set it in .env before running.');
+  process.exit(1);
+}
 
 async function runSqlOn(project, sql) {
   const r = await fetch(

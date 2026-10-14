@@ -2,6 +2,7 @@ package com.nedal.cinejoyremote.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,6 +68,8 @@ import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
+import com.nedal.cinejoyremote.share.TmdbFetcher
+import com.nedal.cinejoyremote.share.TmdbRef
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +94,9 @@ fun LibraryScreen(
     var sortMode by remember { mutableStateOf("newest") }
     // Movies and series are separate shelves: "all" keeps the old combined view.
     var typeFilter by remember { mutableStateOf("all") }
+    // Long-press on a poster proposes removal; the dialog confirms first so a
+    // stray press can never drop a title from the PC catalog.
+    var pendingRemove by remember { mutableStateOf<LibraryShow?>(null) }
     // Settings -> Library: classic card vs Netflix-style bare-poster wall.
     val netflix = LibraryStyleController.mode == LibraryStyle.NETFLIX
 
@@ -260,14 +267,48 @@ fun LibraryScreen(
                     }
                 }
             }
+            // Full-bleed backdrop hero on the Netflix wall — the promoted
+            // title at the top, like the Netflix home screen. The newest
+            // addition, hidden while searching or filtering a single shelf.
+            if (netflix && query.isBlank() && typeFilter == "all") {
+                filtered.firstOrNull()?.let { hero ->
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
+                        LibraryHero(show = hero) { onOpenShow(hero.showId) }
+                    }
+                }
+            }
             items(filtered, key = { it.showId }) { show ->
+                val open = { onOpenShow(show.showId); Unit }
+                val proposeRemove = { pendingRemove = show; Unit }
                 if (netflix) {
-                    NetflixPoster(show) { onOpenShow(show.showId) }
+                    NetflixPoster(show, onClick = open, onLongClick = proposeRemove)
                 } else {
-                    PosterCard(show) { onOpenShow(show.showId) }
+                    PosterCard(show, onClick = open, onLongClick = proposeRemove)
                 }
             }
         }
+    }
+
+    pendingRemove?.let { show ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("Remove from library?") },
+            text = {
+                Text(
+                    "“${show.title}” will be removed from the PC catalog. " +
+                        "Downloaded files stay on disk.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    selected?.let { vm.removeShow(it, show.showId) }
+                    pendingRemove = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) { Text("Cancel") }
+            },
+        )
     }
 
     if (showAdd) {
@@ -282,17 +323,117 @@ fun LibraryScreen(
 }
 
 // ---------------------------------------------------------------- poster grid
+// Full-bleed hero for the Netflix wall: the promoted title's TMDb backdrop
+// (falling back to its poster) under a gradient scrim with the title and
+// synopsis — tapping it opens the same title page as a poster tile.
+@Composable
+private fun LibraryHero(show: LibraryShow, onClick: () -> Unit) {
+    // Start with the mirrored poster so the hero paints instantly; upgrade to
+    // the real backdrop once TMDb answers (rows without a TMDb id keep the
+    // poster — search-per-row would hammer TMDb from a scrolling grid).
+    var art by remember(show.showId, show.poster) { mutableStateOf(show.poster) }
+    LaunchedEffect(show.showId, show.tmdb) {
+        val tmdb = show.tmdb ?: return@LaunchedEffect
+        TmdbFetcher.fetch(TmdbRef(show.type, tmdb)).getOrNull()
+            ?.backdropUrl?.let { art = it }
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            // Escape the grid's 14.dp gutters so the art touches both edges.
+            .padding(horizontal = -14.dp)
+            .clip(RoundedCornerShape(0.dp))
+            .clickable(onClick = onClick)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        if (art != null) {
+            AsyncImage(
+                model = art,
+                contentDescription = show.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // Bottom scrim keeps title + synopsis readable over any artwork.
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)),
+                    ),
+                ),
+        )
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 26.dp, vertical = 14.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                ) {
+                    Text(
+                        if (show.type == "movie") "MOVIE" else "SERIES",
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                show.year?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.85f),
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                show.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            show.overview?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 // Netflix-style wall tile: bare artwork only — no type badge, no title over a
 // scrim, no meta row — the clean poster look the Netflix app uses. Tapping a
 // tile still opens the same title page (whose style is Settings -> Title page).
 @Composable
-private fun NetflixPoster(show: LibraryShow, onClick: () -> Unit) {
+private fun NetflixPoster(
+    show: LibraryShow,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Box(
         Modifier
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         val poster = show.poster
@@ -329,11 +470,15 @@ private fun NetflixPoster(show: LibraryShow, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PosterCard(show: LibraryShow, onClick: () -> Unit) {
+private fun PosterCard(
+    show: LibraryShow,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Column(
         Modifier
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Box(
             Modifier
