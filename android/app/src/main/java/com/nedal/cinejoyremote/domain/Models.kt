@@ -7,6 +7,12 @@ data class Device(
     val name: String,
     val appVersion: String?,
     val lastSeen: String?,
+    // v4 mirror columns (migration-v4-wake.sql): the PC's last known network
+    // identity, mirrored on every heartbeat so the phone can wake it while it
+    // is asleep — the only moment these values are needed.
+    val mac: String? = null,
+    val ip: String? = null,
+    val bcast: String? = null,
 )
 
 data class DownloadTask(
@@ -58,6 +64,19 @@ data class Episode(
     val arSubs: Int = 0,
     val pubAr: Int = 0,
     val needsPub: Boolean = false,
+)
+
+// A pending Seerr request mirrored by the PC (Notifications screen). The PC
+// holds the request until this phone accepts (download + approve in Seerr) or
+// rejects (decline in Seerr, so the requester can ask again).
+data class SeerrRequest(
+    val rowId: Long,
+    val reqId: String,
+    val type: String, // movie | tv
+    val title: String,
+    val year: String?,
+    val seasons: String?, // "S1, S3" for series
+    val poster: String?,
 )
 
 data class RemoteEvent(

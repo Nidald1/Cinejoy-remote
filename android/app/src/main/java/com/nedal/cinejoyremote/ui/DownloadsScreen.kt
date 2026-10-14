@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nedal.cinejoyremote.domain.Device
@@ -100,6 +101,15 @@ private fun dateKey(task: DownloadTask): Long {
 
 private fun sizeKey(task: DownloadTask): Long = task.total ?: task.downloaded ?: 0L
 
+// Movies and series live on separate screens. The library mirror is the
+// authority; the show id pattern ("<slug>-movie|tv-<tmdb>") covers rows whose
+// show has since been removed from the library.
+private fun isSeries(task: DownloadTask, types: Map<String, String>): Boolean {
+    val showId = task.episodeKey.substringBefore(':')
+    types[showId]?.let { return it == "tv" }
+    return !showId.contains(Regex("-movie-\\d+$"))
+}
+
 private fun sortTasks(tasks: List<DownloadTask>, mode: Int): List<DownloadTask> {
     val byName = compareBy<DownloadTask>({ it.title.lowercase() }, { it.episodeLabel.lowercase() })
     return when (mode) {
@@ -122,6 +132,7 @@ fun DownloadsScreen(
     val selected by devicesVm.selectedDeviceId.collectAsState()
     val tasks by vm.tasks.collectAsState()
     val posters by vm.posters.collectAsState()
+    val showTypes by vm.showTypes.collectAsState()
     val error by vm.error.collectAsState()
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
@@ -130,14 +141,21 @@ fun DownloadsScreen(
     }
 
     var queuePaused by remember { mutableStateOf(false) }
+    var mediaTab by rememberSaveable { mutableIntStateOf(0) } // 0 = movies, 1 = series
     var segment by rememberSaveable { mutableIntStateOf(0) }
     var sortMode by rememberSaveable { mutableIntStateOf(2) }
     // "failed" / "finished" bulk delete confirmation (which group + its rows).
     var bulkDelete by remember { mutableStateOf<Pair<String, List<DownloadTask>>?>(null) }
 
-    val active = remember(tasks) { tasks.filter { it.state in activeStates } }
-    val failed = remember(tasks) { tasks.filter { it.state == "error" } }
-    val finished = remember(tasks) { tasks.filter { it.state == "done" } }
+    val mediaCounts = remember(tasks, showTypes) {
+        listOf(tasks.count { !isSeries(it, showTypes) }, tasks.count { isSeries(it, showTypes) })
+    }
+    val mediaTasks = remember(tasks, mediaTab, showTypes) {
+        tasks.filter { isSeries(it, showTypes) == (mediaTab == 1) }
+    }
+    val active = remember(mediaTasks) { mediaTasks.filter { it.state in activeStates } }
+    val failed = remember(mediaTasks) { mediaTasks.filter { it.state == "error" } }
+    val finished = remember(mediaTasks) { mediaTasks.filter { it.state == "done" } }
     val counts = listOf(active.size, failed.size, finished.size)
     val shown = sortTasks(
         when (segment) {
@@ -151,6 +169,37 @@ fun DownloadsScreen(
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(4.dp))
         DeviceRow(devices, selected, onSelect = devicesVm::select)
+
+        // ---- media switcher: Movies | Series (separate download screens)
+        if (selected != null) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf("Movies" to mediaCounts[0], "Series" to mediaCounts[1]).forEachIndexed { i, (label, count) ->
+                    val isSelected = mediaTab == i
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { mediaTab = i },
+                    ) {
+                        Text(
+                            "$label · $count",
+                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         // ---- segment switcher: Active | Failed | Finished, with the sort menu
         if (selected != null) {

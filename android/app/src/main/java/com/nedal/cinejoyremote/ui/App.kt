@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Logout
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.Icon
@@ -63,7 +65,7 @@ import com.nedal.cinejoyremote.presentation.AppViewModelFactory
 import com.nedal.cinejoyremote.presentation.AuthViewModel
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
-import com.nedal.cinejoyremote.presentation.EventsViewModel
+import com.nedal.cinejoyremote.presentation.RequestsViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
 import com.nedal.cinejoyremote.presentation.ServiceLocator
@@ -87,6 +89,19 @@ fun CinejoyApp(authVm: AuthViewModel = viewModel()) {
 // The PC heartbeats once a minute; anything older than 2.5 minutes reads as away.
 // PostgREST renders timestamptz as "...+00:00" which Instant.parse rejects —
 // OffsetDateTime handles both that and the plain "Z" form.
+private fun pcAgeLabel(lastSeen: String?): String? {
+    if (lastSeen.isNullOrBlank()) return null
+    val at = runCatching { Instant.parse(lastSeen) }.getOrNull()
+        ?: runCatching { java.time.OffsetDateTime.parse(lastSeen).toInstant() }.getOrNull()
+        ?: return null
+    val s = java.time.Duration.between(at, Instant.now()).seconds
+    return when {
+        s < 90 -> "seen ${s}s ago"
+        s < 5400 -> "seen ${s / 60}m ago"
+        else -> "seen ${s / 3600}h ago"
+    }
+}
+
 private fun pcOnline(lastSeen: String?): Boolean {
     if (lastSeen.isNullOrBlank()) return false
     val at = runCatching { Instant.parse(lastSeen) }.getOrNull()
@@ -167,6 +182,10 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
 
     val devices by devicesVm.devices.collectAsState()
     val online = remember(devices) { devices.any { pcOnline(it.lastSeen) } }
+    // Freshest heartbeat across devices, as an age label for the status chip.
+    val lastSeenAge = remember(devices) {
+        devices.mapNotNull { it.lastSeen }.maxByOrNull { it }?.let { pcAgeLabel(it) }
+    }
 
     Scaffold(
         topBar = {
@@ -187,7 +206,14 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                             )
                         }
                         Spacer(Modifier.width(10.dp))
-                        Column {
+                        Column(
+                            // The chip is the fastest path to the answer when it
+                            // turns red: tapping it opens Connection, which names
+                            // the broken hop and can wake the PC.
+                            modifier = Modifier.clickable {
+                                nav.navigate("settings") { launchSingleTop = true }
+                            },
+                        ) {
                             Text(
                                 "CineJoy Remote",
                                 style = MaterialTheme.typography.titleMedium,
@@ -205,7 +231,10 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                                 )
                                 Spacer(Modifier.width(5.dp))
                                 Text(
-                                    if (online) "PC online" else "PC offline",
+                                    // "PC offline" alone is unactionable — say how
+                                    // long the PC has been silent.
+                                    if (online) "PC online" else "PC offline" +
+                                        (lastSeenAge?.let { " · $it" } ?: ""),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -233,7 +262,7 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             ) {
                 TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
                 TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
-                TabItem(nav, route, "events", "Activity", Icons.Rounded.History)
+                TabItem(nav, route, "notifications", "Notifications", Icons.Rounded.Notifications)
                 TabItem(nav, route, "settings", "Settings", Icons.Rounded.Settings)
             }
         },
@@ -258,12 +287,18 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 val vm: ShowDetailViewModel = viewModel(factory = factory)
                 ShowDetailScreen(devicesVm, vm, id, snackbar) { nav.popBackStack() }
             }
-            composable("events") {
-                val vm: EventsViewModel = viewModel(factory = factory)
-                EventsScreen(vm)
+            composable("notifications") {
+                val vm: RequestsViewModel = viewModel(factory = factory)
+                NotificationsScreen(vm, snackbar)
             }
             composable("settings") {
-                SettingsScreen(authVm, viewModel(factory = factory), updateVm)
+                SettingsScreen(
+                    authVm,
+                    viewModel(factory = factory),
+                    updateVm,
+                    devicesVm,
+                    viewModel(factory = factory),
+                )
             }
         }
     }

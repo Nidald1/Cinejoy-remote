@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -37,15 +39,22 @@ import com.nedal.cinejoyremote.ui.theme.ThemeController
 import com.nedal.cinejoyremote.ui.theme.ThemeMode
 import com.nedal.cinejoyremote.domain.AuthState
 import com.nedal.cinejoyremote.presentation.AuthViewModel
+import com.nedal.cinejoyremote.presentation.ConnectionViewModel
+import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
 import com.nedal.cinejoyremote.presentation.UpdateUiState
 import com.nedal.cinejoyremote.presentation.UpdateViewModel
+import java.time.Duration
+import java.time.Instant
+import java.time.OffsetDateTime
 
 @Composable
 fun SettingsScreen(
     authVm: AuthViewModel,
     pcTools: PcToolsViewModel,
     updateVm: UpdateViewModel,
+    devicesVm: DevicesViewModel,
+    connection: ConnectionViewModel,
 ) {
     val context = LocalContext.current
     val authState by authVm.authState.collectAsState(initial = AuthState.Loading)
@@ -95,6 +104,73 @@ fun SettingsScreen(
             }
         }
 
+        // ---- connection: why the phone thinks the PC is offline, and wake it
+        SectionCard(title = "Connection") {
+            val devices by devicesVm.devices.collectAsState()
+            val selected by devicesVm.selectedDeviceId.collectAsState()
+            val check by connection.state.collectAsState()
+            val wakeNotice by connection.notice.collectAsState()
+            val pc = remember(devices, selected) { devices.find { it.deviceId == selected } }
+
+            Text(
+                if (pc == null) "No PC selected yet."
+                else "${pc.name} · v${pc.appVersion ?: "?"} · " +
+                    (pc.lastSeen?.let { pcAgeLabel(it) } ?: "never seen"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { connection.check() },
+                    enabled = check !is ConnectionViewModel.CheckState.Running,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (check is ConnectionViewModel.CheckState.Running) "Checking…" else "Check connection")
+                }
+                OutlinedButton(
+                    onClick = { connection.wakePc() },
+                    enabled = pc != null,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Wake PC") }
+            }
+            when (val s = check) {
+                is ConnectionViewModel.CheckState.Idle -> Unit
+                is ConnectionViewModel.CheckState.Running -> {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                is ConnectionViewModel.CheckState.Done -> {
+                    Spacer(Modifier.height(8.dp))
+                    for (step in s.steps) CheckStepRow(step)
+                    if (s.ok) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Every leg answered — this phone can see and control that PC.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            wakeNotice?.let {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        it,
+                        Modifier.padding(10.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                TextButton(onClick = connection::clearNotice) { Text("dismiss") }
+            }
+        }
+
         // ---- account
         SectionCard(title = "Account") {
             Text(
@@ -131,7 +207,7 @@ fun SettingsScreen(
                 onClick = { pcTools.scanSeerr() },
                 enabled = busy == null,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Scan Seerr inbox now") }
+            ) { Text("Check for new requests") }
 
             toolError?.let {
                 Spacer(Modifier.height(8.dp))
@@ -229,6 +305,48 @@ fun SettingsScreen(
             },
             confirmButton = { TextButton(onClick = { pcTools.closeLog() }) { Text("Close") } },
         )
+    }
+}
+
+@Composable
+private fun CheckStepRow(step: ConnectionViewModel.CheckStep) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (step.ok) "✓" else "✗",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (step.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        )
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                step.label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                step.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (step.ok) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+// PostgREST renders timestamptz as "...+00:00", which Instant.parse rejects;
+// OffsetDateTime handles both that and the plain "Z" form.
+private fun pcAgeLabel(lastSeen: String): String? {
+    val at = runCatching { Instant.parse(lastSeen) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(lastSeen).toInstant() }.getOrNull()
+        ?: return null
+    val s = Duration.between(at, Instant.now()).seconds
+    return when {
+        s < 90 -> "seen ${s}s ago"
+        s < 5400 -> "seen ${s / 60}m ago"
+        else -> "seen ${s / 3600}h ago"
     }
 }
 

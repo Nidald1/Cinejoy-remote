@@ -17,6 +17,10 @@ data class DeviceDto(
     val name: String = "",
     @SerialName("app_version") val appVersion: String? = null,
     @SerialName("last_seen") val lastSeen: String? = null,
+    // v4 columns: absent until migration-v4-wake.sql runs, hence defaulted.
+    val mac: String? = null,
+    val ip: String? = null,
+    val bcast: String? = null,
 )
 
 @Serializable
@@ -104,7 +108,7 @@ fun Map<String, String>.toPayloadJson(): JsonObject = buildJsonObject {
     for ((k, v) in this@toPayloadJson) put(k, JsonPrimitive(v))
 }
 
-fun DeviceDto.toDomain() = Device(deviceId, name, appVersion, lastSeen)
+fun DeviceDto.toDomain() = Device(deviceId, name, appVersion, lastSeen, mac, ip, bcast)
 fun DownloadTaskDto.toDomain() = DownloadTask(
     taskId, episodeKey, title, episodeLabel, state, percent,
     downloaded, total, speed, eta, source, server, quality, lastErr,

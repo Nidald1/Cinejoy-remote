@@ -7,6 +7,11 @@ create table if not exists cj_devices (
   name text not null default 'PC',
   app_version text,
   last_seen timestamptz not null default now(),
+  -- Network identity the phone uses to wake this PC (Wake-on-LAN) and to
+  -- report a real address in the connection check.
+  mac text,
+  ip text,
+  bcast text,
   primary key (user_id, device_id)
 );
 

@@ -59,13 +59,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.LibraryShow
-import com.nedal.cinejoyremote.domain.RemoteEvent
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
-import com.nedal.cinejoyremote.presentation.EventsViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,16 +88,26 @@ fun LibraryScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf("newest") }
+    // Movies and series are separate shelves: "all" keeps the old combined view.
+    var typeFilter by remember { mutableStateOf("all") }
 
-    val filtered = remember(shows, query, sortMode) {
+    val filtered = remember(shows, query, sortMode, typeFilter) {
         val q = query.trim()
-        val base = if (q.isEmpty()) shows else shows.filter { it.title.contains(q, ignoreCase = true) }
+        val searched = if (q.isEmpty()) shows else shows.filter { it.title.contains(q, ignoreCase = true) }
+        val base = if (typeFilter == "all") searched else searched.filter { it.type == typeFilter }
         when (sortMode) {
             "name" -> base.sortedBy { it.title.lowercase() }
             "name_desc" -> base.sortedByDescending { it.title.lowercase() }
             "oldest" -> base.sortedBy { it.addedAt ?: "" }
             else -> base.sortedByDescending { it.addedAt ?: "" } // newest first
         }
+    }
+    val typeCounts = remember(shows) {
+        listOf(
+            "all" to shows.size,
+            "movie" to shows.count { it.type == "movie" },
+            "tv" to shows.count { it.type == "tv" },
+        )
     }
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
@@ -179,6 +188,40 @@ fun LibraryScreen(
                             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
                             Icon(Icons.Rounded.Refresh, contentDescription = "Refresh library")
+                        }
+                    }
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                // Movies | Series | All — two shelves instead of one mixed grid.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(
+                        "all" to "All",
+                        "movie" to "Movies",
+                        "tv" to "Series",
+                    ).forEach { (mode, label) ->
+                        val selected = typeFilter == mode
+                        val count = typeCounts.firstOrNull { it.first == mode }?.second ?: 0
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { typeFilter = mode },
+                        ) {
+                            Text(
+                                "$label · $count",
+                                Modifier.fillMaxWidth().padding(vertical = 9.dp),
+                                style = MaterialTheme.typography.labelLarge,
+                                textAlign = TextAlign.Center,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -409,71 +452,6 @@ private fun AddLinkSheet(adding: Boolean, onDismiss: () -> Unit, onAdd: (String)
                     enabled = !adding && url.isNotBlank(),
                     onClick = { onAdd(url.trim()) },
                 ) { Text(if (adding) "Adding…" else "Add") }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- activity
-@Composable
-fun EventsScreen(vm: EventsViewModel) {
-    val events by vm.events.collectAsState()
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 300.dp),
-        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(vertical = 12.dp),
-    ) {
-        if (events.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(
-                    Modifier.fillMaxWidth().padding(top = 48.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text("🔔", style = MaterialTheme.typography.displayMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text("No activity yet", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Download starts, finishes and errors from the PC appear here.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        items(events, key = { it.id }) { event -> EventCard(event) }
-    }
-}
-
-@Composable
-private fun EventCard(event: RemoteEvent) {
-    val emoji = when (event.kind) {
-        "finished" -> "✅"
-        "error" -> "⚠️"
-        "started" -> "⏳"
-        else -> "•"
-    }
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(emoji, style = MaterialTheme.typography.titleLarge)
-            Column {
-                Text(event.title, style = MaterialTheme.typography.titleSmall)
-                if (event.body.isNotBlank()) {
-                    Text(
-                        event.body,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    event.createdAt.replace('T', ' ').take(16),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }

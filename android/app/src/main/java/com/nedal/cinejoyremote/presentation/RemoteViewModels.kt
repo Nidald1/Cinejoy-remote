@@ -7,6 +7,7 @@ import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.domain.MirrorRepository
+import com.nedal.cinejoyremote.core.WolSender
 import com.nedal.cinejoyremote.domain.RemoteEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,9 +20,16 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.nedal.cinejoyremote.domain.SeerrRequest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.Duration
+import java.time.Instant
+import java.time.OffsetDateTime
 
 class DevicesViewModel(
     private val mirror: MirrorRepository = ServiceLocator.mirrorRepository,
@@ -61,6 +69,15 @@ class DownloadsViewModel(
         devicesVm.selectedDeviceId.flatMapLatest { deviceId ->
             if (deviceId == null) flowOf(emptyMap()) else mirror.observeLibrary(deviceId)
                 .map { shows -> shows.mapNotNull { s -> s.poster?.let { s.showId to it } }.toMap() }
+        }.catch { emit(emptyMap()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    // showId -> "movie" / "tv" from the library mirror, so the Downloads tab
+    // can keep movies and series on separate screens without a schema change.
+    val showTypes: StateFlow<Map<String, String>> =
+        devicesVm.selectedDeviceId.flatMapLatest { deviceId ->
+            if (deviceId == null) flowOf(emptyMap()) else mirror.observeLibrary(deviceId)
+                .map { shows -> shows.associate { it.showId to it.type } }
         }.catch { emit(emptyMap()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -359,14 +376,222 @@ class PcToolsViewModel(
     fun closeLog() { _log.value = null }
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
-class EventsViewModel(
+// Connection diagnostics + Wake-on-LAN — the answer to "the app says PC
+// offline, but the PC app is right there". Each leg of the chain is tested
+// with its own evidence so the report names the broken hop instead of just
+// repeating "PC offline":
+//   1. phone → Supabase (auth + RLS + network on this side)
+//   2. PC heartbeat freshness (the exact signal behind the header dot)
+//   3. command round trip (the PC app is polling and answering)
+//   4. Wake-on-LAN readiness (informational — needs migration-v4 columns)
+class ConnectionViewModel(
     private val mirror: MirrorRepository = ServiceLocator.mirrorRepository,
-    devicesVm: DevicesViewModel,
+    private val devicesVm: DevicesViewModel,
 ) : ViewModel() {
-    val events: StateFlow<List<RemoteEvent>> =
+
+    data class CheckStep(
+        val label: String,
+        val ok: Boolean,
+        val detail: String,
+        val critical: Boolean = true,
+    )
+
+    sealed interface CheckState {
+        data object Idle : CheckState
+        data object Running : CheckState
+        data class Done(val steps: List<CheckStep>, val ok: Boolean) : CheckState
+    }
+
+    private val _state = MutableStateFlow<CheckState>(CheckState.Idle)
+    val state: StateFlow<CheckState> = _state
+
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
+
+    fun clearNotice() { _notice.value = null }
+
+    // Same 150s window the header chip uses, so the check can never
+    // contradict the "PC online/offline" dot next to it.
+    private fun ageSeconds(lastSeen: String?): Long? {
+        if (lastSeen.isNullOrBlank()) return null
+        val at = runCatching { Instant.parse(lastSeen) }.getOrNull()
+            ?: runCatching { OffsetDateTime.parse(lastSeen).toInstant() }.getOrNull()
+            ?: return null
+        return Duration.between(at, Instant.now()).seconds
+    }
+
+    fun check() = viewModelScope.launch {
+        val deviceId = devicesVm.selectedDeviceId.value
+        _state.value = CheckState.Running
+        val steps = mutableListOf<CheckStep>()
+
+        if (deviceId == null) {
+            steps += CheckStep("Phone → Supabase", false, "No PC selected yet")
+            _state.value = CheckState.Done(steps, false)
+            return@launch
+        }
+        val t0 = System.currentTimeMillis()
+        val read = mirror.fetchDevice(deviceId)
+        val dbMs = System.currentTimeMillis() - t0
+        val readErr = read.exceptionOrNull()
+        if (readErr != null) {
+            steps += CheckStep("Phone → Supabase", false, readErr.message ?: "read failed")
+            _state.value = CheckState.Done(steps, false)
+            return@launch
+        }
+        val device = read.getOrNull()
+        steps += CheckStep("Phone → Supabase", true, "device row read in ${dbMs}ms")
+
+        val age = ageSeconds(device?.lastSeen)
+        val fresh = age != null && age < ONLINE_WINDOW_S
+        steps += CheckStep(
+            "PC heartbeat",
+            fresh,
+            when {
+                age == null -> "no heartbeat yet — the PC app has never signed in"
+                fresh -> "last seen ${age}s ago"
+                else -> "last seen ${age}s ago — the PC app is stopped, asleep, or signed out"
+            },
+        )
+
+        val t1 = System.currentTimeMillis()
+        val pong = mirror.sendCommandForResult(deviceId, "ping", emptyMap(), timeoutMs = 20_000)
+        val pingMs = System.currentTimeMillis() - t1
+        val pongErr = pong.exceptionOrNull()
+        if (pongErr != null) {
+            steps += CheckStep("Command round trip", false, pongErr.message ?: "no answer in 20s")
+        } else {
+            val res = pong.getOrNull()
+            val version = res?.get("version")?.jsonPrimitive?.contentOrNull ?: "?"
+            val host = res?.get("host")?.jsonPrimitive?.contentOrNull ?: "PC"
+            steps += CheckStep("Command round trip", true, "answered in ${pingMs}ms · $host v$version")
+        }
+
+        val mac = device?.mac
+        val bcast = device?.bcast
+        steps += CheckStep(
+            "Wake-on-LAN",
+            !mac.isNullOrBlank() && !bcast.isNullOrBlank(),
+            when {
+                mac.isNullOrBlank() -> "PC has not mirrored a MAC yet — run migration-v4-wake.sql"
+                bcast.isNullOrBlank() -> "MAC mirrored, broadcast address unknown"
+                else -> "mac $mac → $bcast"
+            },
+            critical = false,
+        )
+
+        _state.value = CheckState.Done(steps, steps.filter { it.critical }.all { it.ok })
+    }
+
+    // Magic packet to the PC's last mirrored broadcast address. Nothing
+    // acknowledges it (a sleeping PC cannot answer), so the notice says the
+    // packet was sent — not that the PC came up.
+    fun wakePc() = viewModelScope.launch {
+        val deviceId = devicesVm.selectedDeviceId.value
+        if (deviceId == null) {
+            _notice.value = "No PC selected"
+            return@launch
+        }
+        val device = mirror.fetchDevice(deviceId).getOrNull()
+        val mac = device?.mac
+        if (mac.isNullOrBlank()) {
+            _notice.value = "No MAC address mirrored yet — the PC must run the updated app once " +
+                "(and migration-v4-wake.sql must be applied)"
+            return@launch
+        }
+        val targets = listOfNotNull(device.bcast, "255.255.255.255")
+        val sent = runCatching { WolSender.send(mac, targets) }
+        _notice.value = sent.exceptionOrNull()?.let { "Wake packet failed: ${it.message}" }
+            ?: "Wake packet sent to $mac via ${targets.joinToString()}"
+    }
+
+    companion object {
+        // Mirrors the header chip's window in ui/App.kt (pcOnline).
+        const val ONLINE_WINDOW_S = 150L
+    }
+}
+
+// Notifications: pending Seerr requests the PC is holding for this phone.
+// Each row is a cj_events row with kind="request" and a JSON body; the PC
+// deletes it the moment it is decided (or when Seerr stops showing the
+// request as open), so the list is always exactly what needs a decision.
+@OptIn(ExperimentalCoroutinesApi::class)
+class RequestsViewModel(
+    private val mirror: MirrorRepository = ServiceLocator.mirrorRepository,
+    private val devicesVm: DevicesViewModel,
+) : ViewModel() {
+
+    val requests: StateFlow<List<SeerrRequest>> =
         devicesVm.selectedDeviceId.flatMapLatest { deviceId ->
             if (deviceId == null) flowOf(emptyList()) else mirror.observeEvents(deviceId)
-        }.catch { emit(emptyList()) }
+        }.map { rows -> rows.mapNotNull { it.toRequest() }.sortedByDescending { it.rowId } }
+            .catch { emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _busy = MutableStateFlow<String?>(null)
+    val busy: StateFlow<String?> = _busy // reqId currently being decided
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
+
+    // Download starts on the PC and the request is approved there too.
+    fun accept(req: SeerrRequest) = decide(
+        req, "seerr-accept", emptyMap(),
+        "Accepted — ${req.title} is downloading",
+    )
+
+    // Declined inside Seerr as well, so the requester can ask again.
+    fun reject(req: SeerrRequest) = decide(
+        req, "seerr-reject", mapOf("reason" to "Declined from CineJoy Remote"),
+        "Declined in Seerr — ${req.title}",
+    )
+
+    private fun decide(
+        req: SeerrRequest,
+        action: String,
+        extra: Map<String, String>,
+        success: String,
+    ) = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value
+        if (d == null) {
+            _error.value = "No PC selected"
+            return@launch
+        }
+        _busy.value = req.reqId
+        try {
+            val r = mirror.sendCommandForResult(
+                d, action, mapOf("reqId" to req.reqId) + extra, timeoutMs = 45_000,
+            )
+            val err = r.exceptionOrNull()
+            if (err != null) _error.value = err.message else _notice.value = success
+        } finally {
+            _busy.value = null
+        }
+    }
+
+    fun clearError() { _error.value = null }
+    fun clearNotice() { _notice.value = null }
+
+    private fun RemoteEvent.toRequest(): SeerrRequest? {
+        if (kind != "request") return null
+        val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+        fun str(key: String): String? = (obj[key] as? JsonPrimitive)?.contentOrNull
+        val reqId = str("reqId")?.takeIf { it.isNotBlank() } ?: return null
+        val seasons = (obj["seasons"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }
+            ?.filter { it > 0 }
+            ?: emptyList()
+        return SeerrRequest(
+            rowId = id,
+            reqId = reqId,
+            type = str("type") ?: "movie",
+            title = str("title")?.takeIf { it.isNotBlank() } ?: "Untitled request",
+            year = str("year")?.takeIf { it.isNotBlank() },
+            seasons = if (seasons.isEmpty()) null else seasons.joinToString(", ") { "S$it" },
+            poster = str("poster")?.takeIf { it.isNotBlank() },
+        )
+    }
 }

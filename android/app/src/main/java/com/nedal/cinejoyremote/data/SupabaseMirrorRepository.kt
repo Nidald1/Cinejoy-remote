@@ -53,6 +53,18 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
         }.decodeList<DeviceDto>().map { it.toDomain() }
     }
 
+    // One-shot row read for the connection check / Wake-on-LAN: no polling,
+    // and it fails loudly so the diagnostic can report the real error.
+    override suspend fun fetchDevice(deviceId: String): Result<Device?> = runCatching {
+        val rows = client.from("cj_devices").select {
+            filter {
+                eq("user_id", userId())
+                eq("device_id", deviceId)
+            }
+        }.decodeList<DeviceDto>()
+        rows.firstOrNull()?.toDomain()
+    }
+
     override fun observeDownloads(deviceId: String): Flow<List<DownloadTask>> = poll {
         client.from("cj_download_state").select {
             filter {
@@ -114,7 +126,9 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
                 val record = insert.record
                 if (record["device_id"]?.jsonPrimitive?.contentOrNull != deviceId) return@collect
                 val kind = record["kind"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                if (kind != "started" && kind != "finished" && kind != "error") return@collect
+                // Download edges and new Seerr requests both deserve an alert
+                // the moment they land (the request needs a decision).
+                if (kind != "started" && kind != "finished" && kind != "error" && kind != "request") return@collect
                 send(
                     RemoteEvent(
                         id = record["id"]?.jsonPrimitive?.longOrNull ?: 0L,

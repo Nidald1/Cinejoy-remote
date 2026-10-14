@@ -14,6 +14,9 @@ interface AuthRepository {
 // Realtime implementation can replace polling without touching callers.
 interface MirrorRepository {
     fun observeDevices(): Flow<List<Device>>
+    // One-shot read of one PC's mirror row: the connection check and
+    // Wake-on-LAN need the last known state now, not on the next poll tick.
+    suspend fun fetchDevice(deviceId: String): Result<Device?>
     fun observeDownloads(deviceId: String): Flow<List<DownloadTask>>
     fun observeLibrary(deviceId: String): Flow<List<LibraryShow>>
     fun observeEvents(deviceId: String): Flow<List<RemoteEvent>>
