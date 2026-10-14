@@ -311,7 +311,9 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             }
             composable("notifications") {
                 val vm: RequestsViewModel = viewModel(factory = factory)
-                NotificationsScreen(vm, snackbar)
+                NotificationsScreen(vm, snackbar, onAcceptedShow = { showId ->
+                    nav.navigate("show/$showId")
+                })
             }
             composable("settings") {
                 SettingsScreen(

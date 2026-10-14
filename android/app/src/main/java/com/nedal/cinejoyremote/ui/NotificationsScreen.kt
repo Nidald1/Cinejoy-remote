@@ -39,22 +39,28 @@ import com.nedal.cinejoyremote.presentation.RequestsViewModel
 // Notifications — Seerr requests waiting for a decision.
 //
 // The PC holds each request instead of downloading it straight away, so this
-// screen is the approval step: Accept queues the download (and approves the
-// request in Seerr), Reject declines it in Seerr too so whoever asked can
-// request it again. The row disappears as soon as it is decided, because the
-// PC deletes the mirrored event.
+// screen is the approval step: Accept imports the title and approves the
+// request in Seerr, then opens the title's page so the source and quality
+// are chosen in the normal download picker. Reject declines it in Seerr too
+// so whoever asked can request it again. The row disappears as soon as it is
+// decided, because the PC deletes the mirrored event.
 @Composable
 fun NotificationsScreen(
     vm: RequestsViewModel,
     snackbar: SnackbarHostState,
+    onAcceptedShow: (String) -> Unit,
 ) {
     val requests by vm.requests.collectAsState()
     val busy by vm.busy.collectAsState()
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
+    val acceptedShow by vm.acceptedShow.collectAsState()
 
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
+    LaunchedEffect(acceptedShow) {
+        acceptedShow?.let { onAcceptedShow(it); vm.clearAcceptedShow() }
+    }
 
     if (requests.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

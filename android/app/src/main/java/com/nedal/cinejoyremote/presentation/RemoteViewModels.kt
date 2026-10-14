@@ -537,10 +537,20 @@ class RequestsViewModel(
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice
 
-    // Download starts on the PC and the request is approved there too.
+    // One-shot: set when an accepted request has a page to open (showId).
+    private val _acceptedShow = MutableStateFlow<String?>(null)
+    val acceptedShow: StateFlow<String?> = _acceptedShow
+    fun clearAcceptedShow() { _acceptedShow.value = null }
+
+    // Approved in Seerr and imported on the PC — but no download starts
+    // there: the caller opens the title's page where source + quality are
+    // chosen in the normal picker.
     fun accept(req: SeerrRequest) = decide(
         req, "seerr-accept", emptyMap(),
-        "Accepted — ${req.title} is downloading",
+        "Accepted — choose where to download ${req.title}",
+        onSuccess = { payload ->
+            _acceptedShow.value = (payload?.get("showId") as? JsonPrimitive)?.contentOrNull
+        },
     )
 
     // Declined inside Seerr as well, so the requester can ask again.
@@ -554,6 +564,7 @@ class RequestsViewModel(
         action: String,
         extra: Map<String, String>,
         success: String,
+        onSuccess: ((JsonObject?) -> Unit)? = null,
     ) = viewModelScope.launch {
         val d = devicesVm.selectedDeviceId.value
         if (d == null) {
@@ -566,7 +577,12 @@ class RequestsViewModel(
                 d, action, mapOf("reqId" to req.reqId) + extra, timeoutMs = 45_000,
             )
             val err = r.exceptionOrNull()
-            if (err != null) _error.value = err.message else _notice.value = success
+            if (err != null) {
+                _error.value = err.message
+            } else {
+                _notice.value = success
+                onSuccess?.invoke(r.getOrNull())
+            }
         } finally {
             _busy.value = null
         }
