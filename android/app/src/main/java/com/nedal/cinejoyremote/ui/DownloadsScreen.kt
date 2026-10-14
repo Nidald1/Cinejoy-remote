@@ -141,17 +141,25 @@ fun DownloadsScreen(
     }
 
     var queuePaused by remember { mutableStateOf(false) }
-    var mediaTab by rememberSaveable { mutableIntStateOf(0) } // 0 = movies, 1 = series
+    var mediaTab by rememberSaveable { mutableIntStateOf(0) } // 0 = all, 1 = movies, 2 = series
     var segment by rememberSaveable { mutableIntStateOf(0) }
     var sortMode by rememberSaveable { mutableIntStateOf(2) }
     // "failed" / "finished" bulk delete confirmation (which group + its rows).
     var bulkDelete by remember { mutableStateOf<Pair<String, List<DownloadTask>>?>(null) }
 
     val mediaCounts = remember(tasks, showTypes) {
-        listOf(tasks.count { !isSeries(it, showTypes) }, tasks.count { isSeries(it, showTypes) })
+        listOf(
+            tasks.size,
+            tasks.count { !isSeries(it, showTypes) },
+            tasks.count { isSeries(it, showTypes) },
+        )
     }
     val mediaTasks = remember(tasks, mediaTab, showTypes) {
-        tasks.filter { isSeries(it, showTypes) == (mediaTab == 1) }
+        when (mediaTab) {
+            1 -> tasks.filter { !isSeries(it, showTypes) }
+            2 -> tasks.filter { isSeries(it, showTypes) }
+            else -> tasks
+        }
     }
     val active = remember(mediaTasks) { mediaTasks.filter { it.state in activeStates } }
     val failed = remember(mediaTasks) { mediaTasks.filter { it.state == "error" } }
@@ -170,13 +178,17 @@ fun DownloadsScreen(
         Spacer(Modifier.height(4.dp))
         DeviceRow(devices, selected, onSelect = devicesVm::select)
 
-        // ---- media switcher: Movies | Series (separate download screens)
+        // ---- media switcher: All | Movies | Series (parity with the Library)
         if (selected != null) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf("Movies" to mediaCounts[0], "Series" to mediaCounts[1]).forEachIndexed { i, (label, count) ->
+                listOf(
+                    "All" to mediaCounts[0],
+                    "Movies" to mediaCounts[1],
+                    "Series" to mediaCounts[2],
+                ).forEachIndexed { i, (label, count) ->
                     val isSelected = mediaTab == i
                     Surface(
                         shape = RoundedCornerShape(12.dp),

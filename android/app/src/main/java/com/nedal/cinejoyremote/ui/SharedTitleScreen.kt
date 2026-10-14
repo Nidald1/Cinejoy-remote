@@ -179,7 +179,7 @@ private fun TitleDetails(
                     } else {
                         Icon(Icons.Rounded.Download, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("تحميل", fontWeight = FontWeight.Bold)
+                        Text("Download", fontWeight = FontWeight.Bold)
                     }
                 }
                 OutlinedButton(
@@ -193,7 +193,7 @@ private fun TitleDetails(
                     } else {
                         Icon(Icons.Rounded.Add, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("إضافة للمكتبة", fontWeight = FontWeight.SemiBold)
+                        Text("Add to Library", fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
