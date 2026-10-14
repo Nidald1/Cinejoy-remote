@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import com.nedal.cinejoyremote.share.SharedLinkInbox
 import com.nedal.cinejoyremote.ui.CinejoyApp
 import com.nedal.cinejoyremote.ui.DetailStyleController
+import com.nedal.cinejoyremote.ui.LibraryStyleController
 import com.nedal.cinejoyremote.ui.theme.CinejoyTheme
 import com.nedal.cinejoyremote.ui.theme.ThemeController
 
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         ThemeController.load(applicationContext)
         DetailStyleController.load(applicationContext)
+        LibraryStyleController.load(applicationContext)
         // A rotation re-delivers the same intent; only a fresh launch is a share.
         if (savedInstanceState == null) handleShare(intent)
         setContent {

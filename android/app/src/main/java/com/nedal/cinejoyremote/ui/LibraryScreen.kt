@@ -90,6 +90,8 @@ fun LibraryScreen(
     var sortMode by remember { mutableStateOf("newest") }
     // Movies and series are separate shelves: "all" keeps the old combined view.
     var typeFilter by remember { mutableStateOf("all") }
+    // Settings -> Library: classic card vs Netflix-style bare-poster wall.
+    val netflix = LibraryStyleController.mode == LibraryStyle.NETFLIX
 
     val filtered = remember(shows, query, sortMode, typeFilter) {
         val q = query.trim()
@@ -131,12 +133,14 @@ fun LibraryScreen(
         },
     ) { inner ->
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 124.dp),
+            // The wall is tighter and the tiles a touch bigger, like the app
+            // it borrows its look from; classic keeps the old metrics exactly.
+            columns = GridCells.Adaptive(minSize = if (netflix) 142.dp else 124.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(inner),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (netflix) 10.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (netflix) 10.dp else 14.dp),
             contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 96.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -257,7 +261,11 @@ fun LibraryScreen(
                 }
             }
             items(filtered, key = { it.showId }) { show ->
-                PosterCard(show) { onOpenShow(show.showId) }
+                if (netflix) {
+                    NetflixPoster(show) { onOpenShow(show.showId) }
+                } else {
+                    PosterCard(show) { onOpenShow(show.showId) }
+                }
             }
         }
     }
@@ -274,6 +282,52 @@ fun LibraryScreen(
 }
 
 // ---------------------------------------------------------------- poster grid
+// Netflix-style wall tile: bare artwork only — no type badge, no title over a
+// scrim, no meta row — the clean poster look the Netflix app uses. Tapping a
+// tile still opens the same title page (whose style is Settings -> Title page).
+@Composable
+private fun NetflixPoster(show: LibraryShow, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(2f / 3f)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        val poster = show.poster
+        if (poster != null) {
+            AsyncImage(
+                model = poster,
+                contentDescription = show.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            // No artwork: keep the tile readable instead of a blank square.
+            Column(
+                Modifier.align(Alignment.Center).padding(horizontal = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    show.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun PosterCard(show: LibraryShow, onClick: () -> Unit) {
     Column(

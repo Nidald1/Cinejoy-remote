@@ -66,6 +66,7 @@ fun SettingsScreen(
     val toolNotice by pcTools.notice.collectAsState()
     val themeMode = ThemeController.mode
     val detailStyle = DetailStyleController.mode
+    val libraryStyle = LibraryStyleController.mode
 
     Column(
         modifier = Modifier
@@ -122,6 +123,36 @@ fun SettingsScreen(
                             when (d) {
                                 DetailStyle.CLASSIC -> "Classic"
                                 DetailStyle.NETFLIX -> "Netflix style"
+                            },
+                            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                            color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        // ---- library tiles: classic card vs Netflix-style poster wall
+        SectionCard(title = "Library") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (l in LibraryStyle.entries) {
+                    val sel = libraryStyle == l
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (sel) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { LibraryStyleController.set(context, l) },
+                    ) {
+                        Text(
+                            when (l) {
+                                LibraryStyle.CLASSIC -> "Classic"
+                                LibraryStyle.NETFLIX -> "Netflix style"
                             },
                             Modifier.fillMaxWidth().padding(vertical = 10.dp),
                             textAlign = TextAlign.Center,
