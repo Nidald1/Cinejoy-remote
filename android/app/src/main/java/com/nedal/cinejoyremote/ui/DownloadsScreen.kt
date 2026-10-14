@@ -441,7 +441,7 @@ private fun MoreMenu(
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(
-            onClick = { open = true },
+            onClick = { open = !open },
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(14.dp))
@@ -582,7 +582,7 @@ private fun SortButton(sortMode: Int, onSelect: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(
-            onClick = { open = true },
+            onClick = { open = !open },
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(14.dp))

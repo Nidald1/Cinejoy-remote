@@ -72,6 +72,9 @@ import com.nedal.cinejoyremote.presentation.ServiceLocator
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.UpdateViewModel
 import com.nedal.cinejoyremote.notifications.EventNotifier
+import com.nedal.cinejoyremote.share.SharedLinkInbox
+import com.nedal.cinejoyremote.share.TmdbRef
+import com.nedal.cinejoyremote.share.parseTmdbRef
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -267,6 +270,20 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             }
         },
     ) { padding ->
+        // A link shared from SeriesGuide (or any app) opens the details page.
+        // Held in the inbox until the shell is up, so it also works from a cold start.
+        val sharedText by SharedLinkInbox.pending.collectAsState()
+        LaunchedEffect(sharedText) {
+            val text = sharedText ?: return@LaunchedEffect
+            SharedLinkInbox.consume()
+            val ref = parseTmdbRef(text)
+            if (ref == null) {
+                snackbar.showSnackbar("The shared text has no TMDb movie or series link")
+            } else {
+                nav.navigate("shared/${ref.type}/${ref.id}") { launchSingleTop = true }
+            }
+        }
+
         NavHost(
             navController = nav,
             startDestination = "downloads",
@@ -286,6 +303,11 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 val id = Uri.decode(entry.arguments?.getString("showId") ?: "")
                 val vm: ShowDetailViewModel = viewModel(factory = factory)
                 ShowDetailScreen(devicesVm, vm, id, snackbar) { nav.popBackStack() }
+            }
+            composable("shared/{type}/{tmdbId}") { entry ->
+                val type = entry.arguments?.getString("type") ?: "movie"
+                val id = entry.arguments?.getString("tmdbId")?.toLongOrNull() ?: 0L
+                SharedTitleScreen(devicesVm, TmdbRef(type, id), snackbar)
             }
             composable("notifications") {
                 val vm: RequestsViewModel = viewModel(factory = factory)

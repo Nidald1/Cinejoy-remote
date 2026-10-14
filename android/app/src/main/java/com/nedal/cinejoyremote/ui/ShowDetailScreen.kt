@@ -189,7 +189,7 @@ fun ShowDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { menuOpen = true }) {
+                    IconButton(onClick = { menuOpen = !menuOpen }) {
                         Icon(Icons.Rounded.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -619,7 +619,7 @@ private fun EpisodeCard(
                     )
                 }
                 Box {
-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
+                    IconButton(onClick = { menuOpen = !menuOpen }, modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.Rounded.MoreVert,
                             contentDescription = "Episode actions",

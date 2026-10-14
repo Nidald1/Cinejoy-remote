@@ -155,7 +155,7 @@ fun LibraryScreen(
                         )
                     }
                     Box {
-                        IconButton(onClick = { sortMenu = true }) {
+                        IconButton(onClick = { sortMenu = !sortMenu }) {
                             Icon(Icons.Rounded.Sort, contentDescription = "Sort library")
                         }
                         DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
