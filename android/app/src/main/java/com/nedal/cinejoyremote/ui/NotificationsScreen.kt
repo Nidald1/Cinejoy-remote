@@ -15,8 +15,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -30,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.SnackbarHostState
 import coil.compose.AsyncImage
@@ -49,6 +54,7 @@ fun NotificationsScreen(
     vm: RequestsViewModel,
     snackbar: SnackbarHostState,
     onAcceptedShow: (String) -> Unit,
+    onOpenSeerr: () -> Unit,
 ) {
     val requests by vm.requests.collectAsState()
     val busy by vm.busy.collectAsState()
@@ -76,7 +82,10 @@ fun NotificationsScreen(
                         "appears here, and you decide whether to download it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(16.dp))
+                SeerrOpenButton(onOpenSeerr)
             }
         }
         return
@@ -87,6 +96,20 @@ fun NotificationsScreen(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        item(key = "seerr-header") {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Seerr requests",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                SeerrOpenButton(onOpenSeerr)
+            }
+        }
         items(requests, key = { it.rowId }) { req ->
             RequestCard(
                 req = req,
@@ -95,6 +118,17 @@ fun NotificationsScreen(
                 onReject = { vm.reject(req) },
             )
         }
+    }
+}
+
+// Entry point to Seerr itself (its own web UI in a WebView): manage every
+// request, browse, and clean up stuck titles — not just what the bridge
+// mirrored here.
+@Composable
+private fun SeerrOpenButton(onOpenSeerr: () -> Unit) {
+    TextButton(onClick = onOpenSeerr) {
+        Icon(Icons.Rounded.Language, contentDescription = null, Modifier.padding(end = 6.dp))
+        Text("Open Seerr", fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -542,6 +542,37 @@ class RequestsViewModel(
     val acceptedShow: StateFlow<String?> = _acceptedShow
     fun clearAcceptedShow() { _acceptedShow.value = null }
 
+    // Seerr's own web UI, addressed through the PC — the only machine that
+    // knows where Seerr listens. The WebView page signs in with its own
+    // session; the API key never leaves the PC.
+    private val _seerrUrl = MutableStateFlow<String?>(null)
+    val seerrUrl: StateFlow<String?> = _seerrUrl
+
+    private val _seerrLoading = MutableStateFlow(false)
+    val seerrLoading: StateFlow<Boolean> = _seerrLoading
+
+    fun openSeerr() = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value
+        if (d == null) {
+            _error.value = "No PC selected"
+            return@launch
+        }
+        _seerrLoading.value = true
+        try {
+            val r = mirror.sendCommandForResult(d, "seerr-info", emptyMap(), timeoutMs = 30_000)
+            val err = r.exceptionOrNull()
+            if (err != null) {
+                _error.value = err.message ?: "the PC did not answer"
+                return@launch
+            }
+            val url = r.getOrNull()?.get("url")?.jsonPrimitive?.contentOrNull
+            if (url.isNullOrBlank()) _error.value = "the PC did not return a Seerr address"
+            else _seerrUrl.value = url
+        } finally {
+            _seerrLoading.value = false
+        }
+    }
+
     // Approved in Seerr and imported on the PC — but no download starts
     // there: the caller opens the title's page where source + quality are
     // chosen in the normal picker.
@@ -578,7 +609,13 @@ class RequestsViewModel(
             )
             val err = r.exceptionOrNull()
             if (err != null) {
-                _error.value = err.message
+                val msg = err.message ?: ""
+                _error.value = msg
+                // The PC no longer knows this request: it was settled on the
+                // PC between the last sync and this tap. Re-scan Seerr now so
+                // the mirror row is deleted this second instead of on the
+                // next background pass.
+                if (msg.contains("no longer queued", ignoreCase = true)) rescan(req.title)
             } else {
                 _notice.value = success
                 onSuccess?.invoke(r.getOrNull())
@@ -586,6 +623,16 @@ class RequestsViewModel(
         } finally {
             _busy.value = null
         }
+    }
+
+    // The request is gone on the PC (settled, declined, or removed) but the
+    // mirror hasn't caught up yet. Ask the PC to re-scan Seerr now so the row
+    // is deleted this second instead of on the next background sync — the same
+    // executor the desktop app's "Scan Seerr inbox" button uses.
+    private fun rescan(title: String) = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value ?: return@launch
+        _notice.value = "$title already handled — removed"
+        mirror.sendCommandForResult(d, "seerr-scan", emptyMap(), timeoutMs = 30_000)
     }
 
     fun clearError() { _error.value = null }

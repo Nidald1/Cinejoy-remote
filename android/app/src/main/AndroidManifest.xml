@@ -10,7 +10,10 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="CineJoy Remote"
+        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- usesCleartextTraffic: Seerr is plain http on the LAN — the in-app
+             Seerr page (Settings-free, from Notifications) loads it directly. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
