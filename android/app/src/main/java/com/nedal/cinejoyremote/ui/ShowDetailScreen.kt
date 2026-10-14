@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -69,16 +70,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
+import com.nedal.cinejoyremote.presentation.SharedTitleState
+import com.nedal.cinejoyremote.presentation.SharedTitleViewModel
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.SourceInfoState
+import com.nedal.cinejoyremote.share.TmdbHint
+import com.nedal.cinejoyremote.share.TmdbRef
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -172,6 +182,17 @@ fun ShowDetailScreen(
     var confirmDelete by remember { mutableStateOf<Episode?>(null) }
     var sheetEpisode by remember { mutableStateOf<Episode?>(null) }
 
+    // Seerr accept hands this showId over (DetailPickInbox): once the episodes
+    // are loaded, raise the sources window straight away so the user picks the
+    // source and quality instead of a default download starting by itself.
+    var autoPicked by remember { mutableStateOf(false) }
+    LaunchedEffect(showId, episodes) {
+        if (autoPicked || episodes.isEmpty()) return@LaunchedEffect
+        if (!DetailPickInbox.take(showId)) return@LaunchedEffect
+        autoPicked = true
+        sheetEpisode = episodes.firstOrNull { it.state != "done" } ?: episodes.first()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -249,12 +270,45 @@ fun ShowDetailScreen(
                 val bySeason = episodes.groupBy { it.season }.toSortedMap()
                 val doneCount = episodes.count { it.state == "done" }
 
+                // Netflix-style header (Settings -> Title page) enriches itself with
+                // the same TMDb metadata the share sheet uses: backdrop, genres,
+                // Arabic synopsis, cast. Rows without a tmdb id resolve by title
+                // search (TmdbHint); classic mode never creates this VM at all.
+                val detailStyle = DetailStyleController.mode
+                val sharedVm: SharedTitleViewModel? =
+                    if (detailStyle == DetailStyle.NETFLIX) {
+                        viewModel(
+                            key = "detail-tmdb-${s.showId}",
+                            factory = remember(s.showId) {
+                                SharedTitleViewModel.factory(
+                                    ref = s.tmdb?.let { TmdbRef(if (s.type == "movie") "movie" else "tv", it) },
+                                    devicesVm = devicesVm,
+                                    hint = TmdbHint(
+                                        type = if (s.type == "movie") "movie" else "tv",
+                                        title = s.title,
+                                        year = s.year,
+                                    ),
+                                )
+                            },
+                        )
+                    } else {
+                        null
+                    }
+                val sharedState: SharedTitleState =
+                    sharedVm?.let { it.state.collectAsState().value } ?: SharedTitleState.Loading
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    item(key = "header") { ShowHeader(s, episodes, doneCount) }
+                    item(key = "header") {
+                        if (detailStyle == DetailStyle.NETFLIX) {
+                            NetflixHeader(sharedState, s, episodes, doneCount)
+                        } else {
+                            ShowHeader(s, episodes, doneCount)
+                        }
+                    }
 
                     if (s.type == "movie") {
                         items(episodes, key = { it.key }) { ep ->
@@ -331,6 +385,182 @@ fun ShowDetailScreen(
 }
 
 // ---------------------------------------------------------------- header
+// Netflix-style header (Settings -> Title page = Netflix style): a full-width
+// backdrop fading into the page colour with the poster and title sitting on it,
+// then genres, the TMDb Arabic synopsis and the cast — the same look as the
+// share sheet. Falls back to the library's own data while TMDb loads (or when
+// the show has no tmdb id), so the page is never empty.
+@Composable
+private fun NetflixHeader(
+    state: SharedTitleState,
+    show: LibraryShow,
+    episodes: List<Episode>,
+    doneCount: Int,
+) {
+    val t = (state as? SharedTitleState.Ready)?.title
+    val poster = t?.posterUrl ?: show.poster
+    val backdrop = t?.backdropUrl ?: show.poster
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Box(Modifier.fillMaxWidth().height(300.dp)) {
+            if (backdrop != null) {
+                AsyncImage(
+                    model = backdrop,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh))
+            }
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.30f),
+                        0.5f to Color.Black.copy(alpha = 0.55f),
+                        1f to MaterialTheme.colorScheme.background,
+                    ),
+                ),
+            )
+            Row(
+                Modifier.align(Alignment.BottomStart).padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                // Poster thumbnail — TMDb first, library poster as fallback.
+                Box(
+                    Modifier
+                        .width(110.dp)
+                        .height(165.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                ) {
+                    if (poster != null) {
+                        AsyncImage(
+                            model = poster,
+                            contentDescription = show.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
+                                null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        show.title,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val meta = buildList {
+                        add(if (show.type == "movie") "Movie" else "Series")
+                        optStr(show.year)?.let { add(it) }
+                        t?.rating?.let { add("★ ${"%.1f".format(it)}") }
+                    }.joinToString("  •  ")
+                    Text(meta, style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f))
+                    if (episodes.isNotEmpty()) {
+                        Text(
+                            "$doneCount of ${episodes.size} downloaded",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.85f),
+                        )
+                        LinearProgressIndicator(
+                            progress = { if (episodes.isEmpty()) 0f else doneCount.toFloat() / episodes.size },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Genres from TMDb once it has answered.
+        val genres = t?.genres.orEmpty()
+        if (genres.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                genres.forEach { MetaChip(it) }
+            }
+        }
+
+        // Synopsis: TMDb Arabic like the share sheet, library overview as fallback.
+        val overview = t?.overview?.ifBlank { null } ?: show.overview
+        if (!overview.isNullOrBlank()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("القصة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    overview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        // Cast strip — same shape as the share sheet's.
+        val cast = t?.cast.orEmpty()
+        if (cast.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("طاقم التمثيل", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    cast.forEach { c ->
+                        Column(
+                            Modifier.width(84.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            ) {
+                                c.photoUrl?.let {
+                                    AsyncImage(
+                                        model = it,
+                                        contentDescription = c.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                c.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                textAlign = TextAlign.Center,
+                            )
+                            if (c.character.isNotBlank()) {
+                                Text(
+                                    c.character,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ShowHeader(show: LibraryShow, episodes: List<Episode>, doneCount: Int) {
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {

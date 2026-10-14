@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.nedal.cinejoyremote.domain.MirrorRepository
 import com.nedal.cinejoyremote.share.SharedTitle
 import com.nedal.cinejoyremote.share.TmdbFetcher
+import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,8 +26,11 @@ sealed interface SharedTitleState {
 enum class SharedAction { LIBRARY, DOWNLOAD }
 
 class SharedTitleViewModel(
-    private val ref: TmdbRef,
+    // Null for library rows without a tmdb id: the hint below resolves it by
+    // search first, so the screen behaves identically either way.
+    private val ref: TmdbRef?,
     private val devicesVm: DevicesViewModel,
+    private val hint: TmdbHint? = null,
     private val mirror: MirrorRepository = ServiceLocator.mirrorRepository,
 ) : ViewModel() {
 
@@ -40,12 +44,22 @@ class SharedTitleViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    // The ref that actions (download / add to library) actually run against:
+    // the constructor ref when given, or the one resolved by search from a hint.
+    private var activeRef: TmdbRef? = null
+
     init {
         viewModelScope.launch {
-            _state.value = TmdbFetcher.fetch(ref).fold(
-                onSuccess = { SharedTitleState.Ready(it) },
-                onFailure = { SharedTitleState.Error(it.message ?: "network error") },
-            )
+            val resolved = ref ?: hint?.let { TmdbFetcher.searchRef(it) }
+            activeRef = resolved
+            _state.value = if (resolved == null) {
+                SharedTitleState.Error("not found on TMDb")
+            } else {
+                TmdbFetcher.fetch(resolved).fold(
+                    onSuccess = { SharedTitleState.Ready(it) },
+                    onFailure = { SharedTitleState.Error(it.message ?: "network error") },
+                )
+            }
         }
     }
 
@@ -65,10 +79,15 @@ class SharedTitleViewModel(
         }
         _busy.value = action
         try {
+            val url = activeRef?.url
+            if (url == null) {
+                _message.value = "Title not found on TMDb"
+                return@launch
+            }
             // Both actions start by adding the title to the PC's library, exactly
             // like the paste-a-link flow does.
             val added = mirror.sendCommandForResult(
-                deviceId, "catalog-add", mapOf("url" to ref.url), timeoutMs = 60_000,
+                deviceId, "catalog-add", mapOf("url" to url), timeoutMs = 60_000,
             )
             if (added.isFailure) {
                 _message.value = added.exceptionOrNull()?.message ?: "could not add to library"
@@ -94,9 +113,13 @@ class SharedTitleViewModel(
     }
 
     companion object {
-        fun factory(ref: TmdbRef, devicesVm: DevicesViewModel): ViewModelProvider.Factory =
+        fun factory(
+            ref: TmdbRef?,
+            devicesVm: DevicesViewModel,
+            hint: TmdbHint? = null,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
-                initializer { SharedTitleViewModel(ref, devicesVm) }
+                initializer { SharedTitleViewModel(ref, devicesVm, hint) }
             }
     }
 }

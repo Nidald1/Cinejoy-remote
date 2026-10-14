@@ -65,6 +65,7 @@ fun SettingsScreen(
     val toolError by pcTools.error.collectAsState()
     val toolNotice by pcTools.notice.collectAsState()
     val themeMode = ThemeController.mode
+    val detailStyle = DetailStyleController.mode
 
     Column(
         modifier = Modifier
@@ -91,6 +92,36 @@ fun SettingsScreen(
                                 ThemeMode.DARK -> "Dark"
                                 ThemeMode.LIGHT -> "Light"
                                 ThemeMode.OLED -> "OLED"
+                            },
+                            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                            color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        // ---- title page: classic detail vs Netflix-style hero (feature toggle)
+        SectionCard(title = "Title page") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (d in DetailStyle.entries) {
+                    val sel = detailStyle == d
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (sel) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { DetailStyleController.set(context, d) },
+                    ) {
+                        Text(
+                            when (d) {
+                                DetailStyle.CLASSIC -> "Classic"
+                                DetailStyle.NETFLIX -> "Netflix style"
                             },
                             Modifier.fillMaxWidth().padding(vertical = 10.dp),
                             textAlign = TextAlign.Center,

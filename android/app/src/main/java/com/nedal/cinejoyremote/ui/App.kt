@@ -312,6 +312,9 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             composable("notifications") {
                 val vm: RequestsViewModel = viewModel(factory = factory)
                 NotificationsScreen(vm, snackbar, onAcceptedShow = { showId ->
+                    // Accepted: jump to the title and let its page open the
+                    // sources window right away (see DetailPickInbox).
+                    DetailPickInbox.offer(showId)
                     nav.navigate("show/$showId")
                 })
             }

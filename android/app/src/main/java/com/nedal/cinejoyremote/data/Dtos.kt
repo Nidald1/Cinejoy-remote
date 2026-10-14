@@ -57,6 +57,7 @@ data class LibraryShowDto(
     val poster: String? = null,
     val overview: String? = null,
     @SerialName("added_at") val addedAt: String? = null,
+    @SerialName("tmdb_id") val tmdbId: Long? = null,
 )
 
 @Serializable
@@ -114,7 +115,7 @@ fun DownloadTaskDto.toDomain() = DownloadTask(
     downloaded, total, speed, eta, source, server, quality, lastErr,
     poster = poster, createdAt = createdAt, updatedAt = updatedAt,
 )
-fun LibraryShowDto.toDomain() = LibraryShow(showId, type, title, year, episodes, poster, overview, addedAt)
+fun LibraryShowDto.toDomain() = LibraryShow(showId, type, title, year, episodes, poster, overview, addedAt, tmdb = tmdbId)
 fun EpisodeDto.toDomain() = Episode(
     key = episodeKey, showId = showId, season = season, episode = episode,
     name = name, still = still, airDate = airDate, rating = rating,

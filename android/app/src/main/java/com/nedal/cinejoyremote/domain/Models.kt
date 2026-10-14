@@ -44,6 +44,7 @@ data class LibraryShow(
     val poster: String? = null,
     val overview: String? = null,
     val addedAt: String? = null,
+    val tmdb: Long? = null, // TMDb id from the PC mirror — enriches the Netflix header
 )
 
 data class Episode(

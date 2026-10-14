@@ -37,6 +37,11 @@ fun parseTmdbRef(text: String): TmdbRef? {
 
 data class CastMember(val name: String, val character: String, val photoUrl: String?)
 
+// Search fallback for library rows that don't carry a TMDb id (cj_library
+// tmdb_id was added after some rows were already mirrored): resolve the id by
+// title + year so the Netflix-style header can still load full metadata.
+data class TmdbHint(val type: String, val title: String, val year: String?)
+
 data class SharedTitle(
     val ref: TmdbRef,
     val title: String,
@@ -74,6 +79,25 @@ object TmdbFetcher {
         ).bodyAsText()
         parse(ref, json.parseToJsonElement(body).jsonObject)
     }
+
+    // First TMDb search hit for (type, title, year) — used when a library row
+    // has no tmdb id. Year is attached only when it looks like a real year so
+    // a bogus value can never zero out the results.
+    suspend fun searchRef(hint: TmdbHint): TmdbRef? = runCatching {
+        val year = (hint.year ?: "").filter { it.isDigit() }.take(4)
+        val query = java.net.URLEncoder.encode(hint.title, "UTF-8")
+        val url = buildString {
+            append("$TMDB_API/search/${hint.type}?api_key=$TMDB_KEY&language=$TMDB_LANG")
+            append("&query=").append(query)
+            if (year.length == 4) append("&year=").append(year)
+        }
+        val body = http.get(url).bodyAsText()
+        val results = (json.parseToJsonElement(body).jsonObject["results"] as? JsonArray).orEmpty()
+        val first = results.firstOrNull() as? JsonObject ?: return@runCatching null
+        val id = (first["id"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            ?: return@runCatching null
+        TmdbRef(hint.type, id)
+    }.getOrNull()
 
     private fun parse(ref: TmdbRef, o: JsonObject): SharedTitle {
         val isTv = ref.type == "tv"
