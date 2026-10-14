@@ -73,6 +73,17 @@ class DownloadsViewModel(
         result.exceptionOrNull()?.let { _error.value = it.message }
     }
 
+    // Composite stop + forget on the PC (task-delete). withFiles=true also
+    // deletes the downloaded file(s) — always behind a confirmation in the UI.
+    fun deleteTask(deviceId: String, taskId: String, withFiles: Boolean) = viewModelScope.launch {
+        val result = ServiceLocator.sendCommand(
+            deviceId,
+            "task-delete",
+            mapOf("taskId" to taskId, "files" to withFiles.toString()),
+        )
+        result.exceptionOrNull()?.let { _error.value = it.message }
+    }
+
     // Pause/resume the whole queue on the PC (parity with the desktop toolbar).
     fun queuePause(paused: Boolean) = viewModelScope.launch {
         val d = devicesVm.selectedDeviceId.value ?: return@launch

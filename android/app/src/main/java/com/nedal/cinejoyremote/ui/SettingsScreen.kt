@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,7 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.nedal.cinejoyremote.ui.theme.ThemeController
+import com.nedal.cinejoyremote.ui.theme.ThemeMode
 import com.nedal.cinejoyremote.domain.AuthState
 import com.nedal.cinejoyremote.presentation.AuthViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
@@ -51,6 +55,7 @@ fun SettingsScreen(
     val logText by pcTools.log.collectAsState()
     val toolError by pcTools.error.collectAsState()
     val toolNotice by pcTools.notice.collectAsState()
+    val themeMode = ThemeController.mode
 
     Column(
         modifier = Modifier
@@ -59,6 +64,37 @@ fun SettingsScreen(
             .padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // ---- appearance: dark / light / OLED
+        SectionCard(title = "Appearance") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (m in ThemeMode.entries) {
+                    val sel = themeMode == m
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (sel) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { ThemeController.set(context, m) },
+                    ) {
+                        Text(
+                            when (m) {
+                                ThemeMode.DARK -> "Dark"
+                                ThemeMode.LIGHT -> "Light"
+                                ThemeMode.OLED -> "OLED"
+                            },
+                            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                            color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
         // ---- account
         SectionCard(title = "Account") {
             Text(

@@ -18,9 +18,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -50,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -125,6 +132,8 @@ fun DownloadsScreen(
     var queuePaused by remember { mutableStateOf(false) }
     var segment by rememberSaveable { mutableIntStateOf(0) }
     var sortMode by rememberSaveable { mutableIntStateOf(2) }
+    // "failed" / "finished" bulk delete confirmation (which group + its rows).
+    var bulkDelete by remember { mutableStateOf<Pair<String, List<DownloadTask>>?>(null) }
 
     val active = remember(tasks) { tasks.filter { it.state in activeStates } }
     val failed = remember(tasks) { tasks.filter { it.state == "error" } }
@@ -181,7 +190,12 @@ fun DownloadsScreen(
                     onQueueMissing = { selected?.let { vm.command(it, "queue-missing") } },
                     onQueueClear = { selected?.let { vm.command(it, "queue-clear") } },
                     onRetryAll = { failed.forEach { t -> selected?.let { vm.command(it, "retry", t.taskId) } } },
-                    onClearFinished = { finished.forEach { t -> selected?.let { vm.command(it, "forget", t.taskId) } } },
+                    onBulkDelete = { kind ->
+                        bulkDelete = kind to when (kind) {
+                            "failed" -> failed
+                            else -> finished
+                        }
+                    },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -259,11 +273,51 @@ fun DownloadsScreen(
                     TaskCard(
                         task,
                         poster = task.poster ?: posters[task.episodeKey.substringBefore(':')],
-                        onAction = { action -> selected?.let { vm.command(it, action, task.taskId) } },
+                        onAction = { action ->
+                            selected?.let { dev ->
+                                when (action) {
+                                    // stop / delete go through the composite
+                                    // task-delete command (stop + forget in one).
+                                    "stop", "delete-list" -> vm.deleteTask(dev, task.taskId, withFiles = false)
+                                    "delete" -> vm.deleteTask(dev, task.taskId, withFiles = true)
+                                    else -> vm.command(dev, action, task.taskId)
+                                }
+                            }
+                        },
                     )
                 }
             }
         }
+    }
+
+    // ---- bulk delete confirmation (failed / finished, from the ⋮ menu)
+    bulkDelete?.let { (kind, rows) ->
+        val dev = selected
+        AlertDialog(
+            onDismissRequest = { bulkDelete = null },
+            title = { Text("Delete all $kind (${rows.size})?") },
+            text = {
+                Text(
+                    "Delete removes every $kind download from the list and deletes the " +
+                        "downloaded files from the PC. You can also just clear the list and keep the files.",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { bulkDelete = null }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    Button(onClick = {
+                        bulkDelete = null
+                        if (dev != null) rows.forEach { t -> vm.deleteTask(dev, t.taskId, withFiles = true) }
+                    }) { Text("Delete with files") }
+                    TextButton(onClick = {
+                        bulkDelete = null
+                        if (dev != null) rows.forEach { t -> vm.deleteTask(dev, t.taskId, withFiles = false) }
+                    }) { Text("Clear list only") }
+                }
+            },
+        )
     }
 }
 
@@ -276,48 +330,49 @@ private fun SegmentTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // All three pills render the exact same parts (dot + label + count badge)
+    // at the same fixed height, so the row stays straight whatever the counts.
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
         else Color.Transparent,
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .height(38.dp)
+            .clickable(onClick = onClick),
     ) {
         Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
-            if (count > 0) {
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(if (selected) accent else MaterialTheme.colorScheme.outline),
-                )
-                Spacer(Modifier.width(5.dp))
-            }
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (selected) accent else MaterialTheme.colorScheme.outline),
+            )
+            Spacer(Modifier.width(5.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                 else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
-            if (count > 0) {
-                Spacer(Modifier.width(5.dp))
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (selected) accent.copy(alpha = 0.18f)
-                    else MaterialTheme.colorScheme.surfaceContainerHighest,
-                ) {
-                    Text(
-                        count.toString(),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            Spacer(Modifier.width(5.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (selected) accent.copy(alpha = 0.18f)
+                else MaterialTheme.colorScheme.surfaceContainerHighest,
+            ) {
+                Text(
+                    count.toString(),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -332,7 +387,7 @@ private fun MoreMenu(
     onQueueMissing: () -> Unit,
     onQueueClear: () -> Unit,
     onRetryAll: () -> Unit,
-    onClearFinished: () -> Unit,
+    onBulkDelete: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -373,11 +428,25 @@ private fun MoreMenu(
                     text = { Text("Retry all failed ($failedCount)") },
                     onClick = { onRetryAll(); open = false },
                 )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "Delete all failed ($failedCount)",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = { onBulkDelete("failed"); open = false },
+                )
             }
             if (finishedCount > 0) {
                 DropdownMenuItem(
-                    text = { Text("Remove all finished ($finishedCount)") },
-                    onClick = { onClearFinished(); open = false },
+                    text = {
+                        Text(
+                            "Delete all finished ($finishedCount)",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = { onBulkDelete("finished"); open = false },
                 )
             }
         }
@@ -507,6 +576,7 @@ private fun SortButton(sortMode: Int, onSelect: (Int) -> Unit) {
 @Composable
 fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> Unit) {
     val accent = taskColor(task)
+    var confirmDelete by remember(task.taskId) { mutableStateOf(false) }
     Card(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -608,23 +678,83 @@ fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> U
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Small icon actions — no words, so the card stays clean.
+                    // Pause/Stop for running, Resume/Stop when paused, Retry on
+                    // failed; a trash icon on every card opens the delete confirm.
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         when (task.state) {
-                            "downloading", "queued", "resolving", "stopping" ->
-                                SmallAction("Pause") { onAction("pause") }
-
-                            "paused" -> {
-                                SmallAction("Resume") { onAction("resume") }
-                                SmallAction("Remove") { onAction("forget") }
+                            "downloading", "queued", "resolving", "stopping" -> {
+                                IconAction(Icons.Rounded.Pause, "Pause download") { onAction("pause") }
+                                IconAction(
+                                    Icons.Rounded.Stop,
+                                    "Stop download",
+                                    tint = MaterialTheme.colorScheme.error,
+                                ) { onAction("stop") }
                             }
 
-                            "error" -> SmallAction("Retry") { onAction("retry") }
-                            "done" -> SmallAction("Clear") { onAction("forget") }
+                            "paused" -> {
+                                IconAction(
+                                    Icons.Rounded.PlayArrow,
+                                    "Resume download",
+                                    tint = Color(0xFF34D399),
+                                ) { onAction("resume") }
+                                IconAction(
+                                    Icons.Rounded.Stop,
+                                    "Stop download",
+                                    tint = MaterialTheme.colorScheme.error,
+                                ) { onAction("stop") }
+                            }
+
+                            "error" -> IconAction(
+                                Icons.Rounded.Refresh,
+                                "Retry download",
+                                tint = Color(0xFF38BDF8),
+                            ) { onAction("retry") }
                         }
+                        Spacer(Modifier.weight(1f))
+                        IconAction(
+                            Icons.Rounded.Delete,
+                            "Delete download",
+                            tint = MaterialTheme.colorScheme.error,
+                        ) { confirmDelete = true }
                     }
                 }
             }
         }
+    }
+
+    // ---- delete confirmation (single task)
+    if (confirmDelete) {
+        val who = task.title +
+            (task.episodeLabel.takeIf { it.isNotBlank() && it != task.title }?.let { " — $it" } ?: "")
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete download?") },
+            text = {
+                Text(
+                    "$who\n\nDelete removes it from the list and deletes the downloaded " +
+                        "file from the PC. You can also just remove it from the list and keep the file.",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    Button(onClick = {
+                        confirmDelete = false
+                        onAction("delete")
+                    }) { Text("Delete with file") }
+                    TextButton(onClick = {
+                        confirmDelete = false
+                        onAction("delete-list")
+                    }) { Text("Remove from list only") }
+                }
+            },
+        )
     }
 }
 
@@ -681,12 +811,21 @@ private fun StatusPill(task: DownloadTask, accent: Color) {
 }
 
 @Composable
-private fun SmallAction(label: String, onClick: () -> Unit) {
-    TextButton(
+private fun IconAction(
+    icon: ImageVector,
+    desc: String,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onClick: () -> Unit,
+) {
+    IconButton(
         onClick = onClick,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-        modifier = Modifier.height(30.dp),
-    ) { Text(label, style = MaterialTheme.typography.labelMedium) }
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
+        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(17.dp))
+    }
 }
 
 fun formatBytes(n: Long): String {

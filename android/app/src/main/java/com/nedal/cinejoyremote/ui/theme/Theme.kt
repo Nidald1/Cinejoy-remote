@@ -1,13 +1,18 @@
 package com.nedal.cinejoyremote.ui.theme
 
+import android.content.Context
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
 // Morphe-style Material 3 brand: a blue → teal gradient identity over a
 // near-black (#1A1C1E) surface. Accent #A4C9FF keeps buttons and highlights
-// readable in the dark-only app.
+// readable in dark mode. Light and OLED variants keep the same identity.
 
 // Brand gradient endpoints — use for headers, update dialog, FABs.
 val MorpheBrandBlue = Color(0xFF1E5AA8)
@@ -54,9 +59,82 @@ private val MorpheDark = darkColorScheme(
     onErrorContainer = Color(0xFFFFDAD6),
 )
 
+// Pure-black OLED variant: backgrounds/surfaces go to #000 so AMOLED pixels
+// switch fully off; cards stay slightly raised so they remain visible.
+private val MorpheOled = MorpheDark.copy(
+    background = Color.Black,
+    surface = Color.Black,
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color.Black,
+    surfaceContainer = Color(0xFF0B0B0D),
+    surfaceContainerHigh = Color(0xFF121215),
+    surfaceContainerHighest = Color(0xFF1B1B1F),
+)
+
+// Light variant of the same brand identity.
+private val MorpheLight = lightColorScheme(
+    primary = MorpheBrandBlue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD4E3FF),
+    onPrimaryContainer = Color(0xFF001B3F),
+    secondary = Color(0xFF43566B),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFD6E3F8),
+    onSecondaryContainer = Color(0xFF112C40),
+    tertiary = Color(0xFF006A6A),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFF6FF7F5),
+    onTertiaryContainer = Color(0xFF002020),
+    background = Color(0xFFF6F7FB),
+    onBackground = Color(0xFF1A1C1E),
+    surface = Color(0xFFF6F7FB),
+    onSurface = Color(0xFF1A1C1E),
+    surfaceVariant = Color(0xFFE1E3EA),
+    onSurfaceVariant = Color(0xFF43474E),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color.White,
+    surfaceContainer = Color(0xFFEEF0F5),
+    surfaceContainerHigh = Color(0xFFE8EAF0),
+    surfaceContainerHighest = Color(0xFFDDE0E7),
+    outline = Color(0xFF73777F),
+    outlineVariant = Color(0xFFC3C6CF),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+)
+
+enum class ThemeMode { DARK, LIGHT, OLED }
+
+// Process-wide theme choice, persisted in SharedPreferences so the mode
+// survives restarts. SettingsScreen writes it; MainActivity reads it.
+object ThemeController {
+    var mode by mutableStateOf(ThemeMode.DARK)
+        private set
+
+    fun load(context: Context) {
+        val prefs = context.getSharedPreferences("cinejoy_theme", Context.MODE_PRIVATE)
+        mode = runCatching { ThemeMode.valueOf(prefs.getString("mode", "DARK") ?: "DARK") }
+            .getOrDefault(ThemeMode.DARK)
+    }
+
+    fun set(context: Context, newMode: ThemeMode) {
+        mode = newMode
+        context.getSharedPreferences("cinejoy_theme", Context.MODE_PRIVATE)
+            .edit()
+            .putString("mode", newMode.name)
+            .apply()
+    }
+}
+
 @Composable
-fun CinejoyTheme(content: @Composable () -> Unit) {
-    // Dark-only app with a fixed brand identity — no Material You sampling,
-    // so the Morphe look is identical on every device.
-    MaterialTheme(colorScheme = MorpheDark, content = content)
+fun CinejoyTheme(mode: ThemeMode = ThemeMode.DARK, content: @Composable () -> Unit) {
+    // Fixed brand identity per mode — no Material You sampling, so the Morphe
+    // look is identical on every device.
+    val scheme = when (mode) {
+        ThemeMode.LIGHT -> MorpheLight
+        ThemeMode.OLED -> MorpheOled
+        ThemeMode.DARK -> MorpheDark
+    }
+    MaterialTheme(colorScheme = scheme, content = content)
 }
