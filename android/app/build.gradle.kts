@@ -13,8 +13,8 @@ android {
         applicationId = "com.nedal.cinejoyremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 500147
-        versionName = "5.0.147"
+        versionCode = 500148
+        versionName = "5.0.148"
     }
 
     // CI signed builds: env vars set by .github/workflows/release.yml.
@@ -65,10 +65,15 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
-    // Ktor HTTP engine (Android): supabase-kt brings ktor-client-core but no
-    // engine. Without this the app crashes on launch with
+    // Ktor HTTP engine: supabase-kt brings ktor-client-core but no engine.
+    // Without this the app crashes on launch with
     // "Failed to find HTTP client engine implementation".
-    implementation(libs.ktor.client.android)
+    // OkHttp, NOT ktor-client-android (HttpURLConnection): that engine runs
+    // request-cancellation cleanup on the thread that cancelled the call — the
+    // main thread during navigation — where its blocking socket drain throws
+    // NetworkOnMainThreadException inside a coroutine completion handler and
+    // kills the app (the "Library crashes" bug).
+    implementation(libs.ktor.client.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.material.icons.extended)
     implementation(libs.supabase.auth)

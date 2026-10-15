@@ -1,7 +1,7 @@
 package com.nedal.cinejoyremote.share
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,7 +70,10 @@ object SharedLinkInbox {
 }
 
 object TmdbFetcher {
-    private val http by lazy { HttpClient(Android) { expectSuccess = true } }
+    // OkHttp (not the HttpURLConnection/"Android" engine): see the note on the
+    // ktor-client-okhttp dependency — the Android engine blocks the main
+    // thread during request cancellation and crashes the app on navigation.
+    private val http by lazy { HttpClient(OkHttp) { expectSuccess = true } }
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun fetch(ref: TmdbRef): Result<SharedTitle> = runCatching {

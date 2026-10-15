@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -60,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -339,10 +342,14 @@ private fun LibraryHero(show: LibraryShow, onClick: () -> Unit) {
     }
     Box(
         Modifier
-            .fillMaxWidth()
-            .height(220.dp)
             // Escape the grid's 14.dp gutters so the art touches both edges.
-            .padding(horizontal = -14.dp)
+            // Modifier.padding rejects negative values ("Padding must be
+            // non-negative" — it crashed every Netflix-wall library open), so
+            // measure at full screen width (requiredWidth ignores the grid's
+            // item constraints) and shift left by the gutter instead.
+            .requiredWidth(LocalConfiguration.current.screenWidthDp.dp)
+            .offset(x = (-14).dp)
+            .height(220.dp)
             .clip(RoundedCornerShape(0.dp))
             .clickable(onClick = onClick)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
