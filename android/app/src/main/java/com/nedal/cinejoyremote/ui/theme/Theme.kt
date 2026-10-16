@@ -1,7 +1,10 @@
 package com.nedal.cinejoyremote.ui.theme
 
 import android.content.Context
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -106,6 +109,15 @@ private val MorpheLight = lightColorScheme(
 
 enum class ThemeMode { DARK, LIGHT, OLED }
 
+// The shape scale the whole app shares: controls 12, cards 16, dialogs 28.
+val CinejoyShapes = Shapes(
+    extraSmall = RoundedCornerShape(Radius.xs),
+    small = RoundedCornerShape(Radius.sm),
+    medium = RoundedCornerShape(Radius.md),
+    large = RoundedCornerShape(Radius.lg),
+    extraLarge = RoundedCornerShape(Radius.xl),
+)
+
 // Process-wide theme choice, persisted in SharedPreferences so the mode
 // survives restarts. SettingsScreen writes it; MainActivity reads it.
 object ThemeController {
@@ -130,11 +142,24 @@ object ThemeController {
 @Composable
 fun CinejoyTheme(mode: ThemeMode = ThemeMode.DARK, content: @Composable () -> Unit) {
     // Fixed brand identity per mode — no Material You sampling, so the Morphe
-    // look is identical on every device.
+    // look is identical on every device. Typography and shapes come from the
+    // shared design system (Type.kt / Tokens.kt) so every screen reads the
+    // same hierarchy and corner language.
     val scheme = when (mode) {
         ThemeMode.LIGHT -> MorpheLight
         ThemeMode.OLED -> MorpheOled
         ThemeMode.DARK -> MorpheDark
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(
+        colorScheme = scheme,
+        typography = CinejoyTypography,
+        shapes = CinejoyShapes,
+    ) {
+        // Surface seeds LocalContentColor (onBackground), so bare Text()
+        // without an explicit colour renders readable instead of black —
+        // the AuthScreen title bug that shipped in v5.0.148.
+        Surface(color = scheme.background) {
+            content()
+        }
+    }
 }

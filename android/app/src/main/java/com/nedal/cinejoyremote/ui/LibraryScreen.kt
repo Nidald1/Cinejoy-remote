@@ -2,14 +2,13 @@ package com.nedal.cinejoyremote.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,17 +26,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -61,16 +58,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
+import com.nedal.cinejoyremote.ui.components.Artwork
+import com.nedal.cinejoyremote.ui.components.BarePosterTile
+import com.nedal.cinejoyremote.ui.components.ClassicPosterTile
+import com.nedal.cinejoyremote.ui.components.DeviceRow
+import com.nedal.cinejoyremote.ui.components.EmptyState
+import com.nedal.cinejoyremote.ui.theme.Spacing
 import com.nedal.cinejoyremote.share.TmdbFetcher
 import com.nedal.cinejoyremote.share.TmdbRef
 
@@ -134,12 +135,17 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        // Edge-to-edge: the shell already insets this screen, so the inner
+        // Scaffold must not add system-bar padding again.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
-            ExtendedFloatingActionButton(
+            // Icon FAB — the label "Add link" ate 120dp of grid width and the
+            // plus is unambiguous this close to the Library.
+            FloatingActionButton(
                 onClick = { showAdd = true },
-                icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
-                text = { Text("Add link") },
-            )
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = "Add link")
+            }
         },
     ) { inner ->
         LazyVerticalGrid(
@@ -149,9 +155,15 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(inner),
-            horizontalArrangement = Arrangement.spacedBy(if (netflix) 10.dp else 12.dp),
-            verticalArrangement = Arrangement.spacedBy(if (netflix) 10.dp else 14.dp),
-            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 96.dp),
+            // On the 4/8 grid: the Netflix wall packs tighter than classic.
+            horizontalArrangement = Arrangement.spacedBy(if (netflix) Spacing.sm else Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(if (netflix) Spacing.md else Spacing.lg),
+            contentPadding = PaddingValues(
+                start = Spacing.gutter,
+                end = Spacing.gutter,
+                top = Spacing.xs,
+                bottom = Spacing.bottomClearance,
+            ),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(
@@ -254,18 +266,23 @@ fun LibraryScreen(
             }
             if (filtered.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    if (shows.isEmpty()) EmptyLibrary(hasDevice = selected != null)
-                    else Column(
-                        Modifier.fillMaxWidth().padding(top = 48.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("🔍", style = MaterialTheme.typography.displayMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Text("No matches", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Nothing in your library matches “$query”.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (shows.isEmpty()) {
+                        EmptyState(
+                            emoji = "🎬",
+                            title = "Your library is empty",
+                            message = if (selected != null) {
+                                "Tap “Add link” and paste any watch link — cinejoy.pk, movy.sx, akwam, themoviedb.org or imdb.com. The PC will fetch it and you pick the download source right after."
+                            } else {
+                                "Sign the PC app in first — then add movies and series from here."
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        EmptyState(
+                            emoji = "🔍",
+                            title = "No matches",
+                            message = "Nothing in your library matches “$query”.",
+                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
                         )
                     }
                 }
@@ -284,9 +301,9 @@ fun LibraryScreen(
                 val open = { onOpenShow(show.showId); Unit }
                 val proposeRemove = { pendingRemove = show; Unit }
                 if (netflix) {
-                    NetflixPoster(show, onClick = open, onLongClick = proposeRemove)
+                    BarePosterTile(show, onClick = open, onLongClick = proposeRemove)
                 } else {
-                    PosterCard(show, onClick = open, onLongClick = proposeRemove)
+                    ClassicPosterTile(show, onClick = open, onLongClick = proposeRemove)
                 }
             }
         }
@@ -342,26 +359,23 @@ private fun LibraryHero(show: LibraryShow, onClick: () -> Unit) {
     }
     Box(
         Modifier
-            // Escape the grid's 14.dp gutters so the art touches both edges.
+            // Escape the grid's gutters so the art touches both edges.
             // Modifier.padding rejects negative values ("Padding must be
             // non-negative" — it crashed every Netflix-wall library open), so
             // measure at full screen width (requiredWidth ignores the grid's
             // item constraints) and shift left by the gutter instead.
             .requiredWidth(LocalConfiguration.current.screenWidthDp.dp)
-            .offset(x = (-14).dp)
+            .offset(x = -Spacing.gutter)
             .height(220.dp)
             .clip(RoundedCornerShape(0.dp))
             .clickable(onClick = onClick)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        if (art != null) {
-            AsyncImage(
-                model = art,
-                contentDescription = show.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        Artwork(
+            model = art,
+            contentDescription = show.title,
+            modifier = Modifier.fillMaxSize(),
+        )
         // Bottom scrim keeps title + synopsis readable over any artwork.
         Box(
             Modifier
@@ -423,186 +437,6 @@ private fun LibraryHero(show: LibraryShow, onClick: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-// Netflix-style wall tile: bare artwork only — no type badge, no title over a
-// scrim, no meta row — the clean poster look the Netflix app uses. Tapping a
-// tile still opens the same title page (whose style is Settings -> Title page).
-@Composable
-private fun NetflixPoster(
-    show: LibraryShow,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .aspectRatio(2f / 3f)
-            .clip(RoundedCornerShape(14.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        val poster = show.poster
-        if (poster != null) {
-            AsyncImage(
-                model = poster,
-                contentDescription = show.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            // No artwork: keep the tile readable instead of a blank square.
-            Column(
-                Modifier.align(Alignment.Center).padding(horizontal = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Icon(
-                    if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    show.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    textAlign = TextAlign.Center,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PosterCard(
-    show: LibraryShow,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
-    Column(
-        Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            val poster = show.poster
-            if (poster != null) {
-                AsyncImage(
-                    model = poster,
-                    contentDescription = show.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                // Bottom scrim keeps the title readable over any artwork.
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
-                            ),
-                        ),
-                )
-            } else {
-                Icon(
-                    if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color.Black.copy(alpha = 0.55f),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp),
-            ) {
-                Text(
-                    if (show.type == "movie") "Movie" else "Series",
-                    Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            if (poster != null) {
-                Text(
-                    show.title,
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(horizontal = 8.dp, vertical = 7.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-        if (show.poster == null) {
-            Text(
-                show.title,
-                Modifier.padding(top = 6.dp),
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Row(
-            Modifier.padding(top = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            show.year?.takeIf { it.isNotBlank() }?.let { MetaChip(it) }
-            MetaChip("${show.episodes} ep")
-        }
-    }
-}
-
-@Composable
-private fun EmptyLibrary(hasDevice: Boolean) {
-    Column(
-        Modifier.fillMaxWidth().padding(top = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("🎬", style = MaterialTheme.typography.displayMedium)
-        Spacer(Modifier.height(8.dp))
-        Text("Your library is empty", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            if (hasDevice) "Tap “Add link” and paste any watch link — cinejoy.pk, movy.sx, akwam, themoviedb.org or imdb.com. The PC will fetch it and you pick the download source right after."
-            else "Sign the PC app in first — then add movies and series from here.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-fun MetaChip(text: String) {
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium,
-        )
     }
 }
 

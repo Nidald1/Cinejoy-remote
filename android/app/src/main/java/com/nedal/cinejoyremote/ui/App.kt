@@ -6,6 +6,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -24,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
@@ -42,17 +50,23 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -74,6 +88,7 @@ import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.UpdateViewModel
 import com.nedal.cinejoyremote.notifications.EventNotifier
 import com.nedal.cinejoyremote.share.SharedLinkInbox
+import com.nedal.cinejoyremote.ui.theme.Motion
 import com.nedal.cinejoyremote.share.TmdbRef
 import com.nedal.cinejoyremote.share.parseTmdbRef
 import kotlinx.coroutines.flow.catch
@@ -131,6 +146,35 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var backAt by remember { mutableLongStateOf(0L) }
+
+    // Hide-on-scroll bars: the top bar collapses fully on scroll down and
+    // springs back on scroll up (enterAlways); the bottom nav slides away the
+    // same way, so lists get the whole screen while reading.
+    val topBarBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
+    var bottomBarVisible by remember { mutableStateOf(true) }
+    var bottomScrollAcc by remember { mutableStateOf(0f) }
+    val bottomBarConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                val dy = available.y
+                if (dy == 0f) return Offset.Zero
+                // Direction change resets the accumulator so a small wiggle
+                // can't flip the bar both ways.
+                if ((dy > 0f) != (bottomScrollAcc > 0f)) bottomScrollAcc = 0f
+                bottomScrollAcc += dy
+                // Asymmetric on purpose: hiding is a deliberate scroll-down
+                // (48px), but showing needs a much longer pull because a short
+                // list hitting its end bounces back with a positive dy that
+                // would otherwise flip the bar right back open.
+                if (bottomScrollAcc <= -48f) { bottomBarVisible = false; bottomScrollAcc = 0f }
+                else if (bottomScrollAcc >= 160f) { bottomBarVisible = true; bottomScrollAcc = 0f }
+                return Offset.Zero
+            }
+        }
+    }
+    // A freshly opened screen always shows the bars again.
+    LaunchedEffect(route) { bottomBarVisible = true; bottomScrollAcc = 0f }
 
     // Update flow: silent check on launch; when a newer release exists on
     // GitHub (and wasn't dismissed for that exact version) the popup shows.
@@ -190,6 +234,10 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     }
 
     val devices by devicesVm.devices.collectAsState()
+    // Pair with the PC here, at app level — this used to live only in the
+    // Downloads/Library screens, so opening straight on Seerr or Notifications
+    // (or sharing into the app) sent commands with no PC selected.
+    LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
     val online = remember(devices) { devices.any { pcOnline(it.lastSeen) } }
     // Freshest heartbeat across devices, as an age label for the status chip.
     val lastSeenAge = remember(devices) {
@@ -197,6 +245,11 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     }
 
     Scaffold(
+        // Both bar controllers sit above the content so every screen's
+        // LazyColumn/LazyVerticalGrid drives them through nested scroll.
+        modifier = Modifier
+            .nestedScroll(topBarBehavior.nestedScrollConnection)
+            .nestedScroll(bottomBarConnection),
         topBar = {
             TopAppBar(
                 title = {
@@ -254,6 +307,7 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
+                scrollBehavior = topBarBehavior,
                 actions = {
                     IconButton(onClick = onSignOut) {
                         Icon(Icons.Rounded.Logout, contentDescription = "Sign out")
@@ -263,19 +317,28 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            // Morphe styling: flat dark bar with a soft primary pill behind the
-            // active icon and uniform icon/label states.
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 0.dp,
+            // Slide + shrink so the content padding animates with the bar
+            // instead of snapping a gap closed.
+            AnimatedVisibility(
+                visible = bottomBarVisible,
+                enter = slideInVertically { it } + expandVertically() + fadeIn(),
+                exit = slideOutVertically { it } + shrinkVertically() + fadeOut(),
             ) {
-                TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
-                TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
-                TabItem(
-                    nav, route, "notifications", "Notifications", Icons.Rounded.Notifications,
-                    badge = pendingRequests.size,
-                )
-                TabItem(nav, route, "settings", "Settings", Icons.Rounded.Settings)
+                // Morphe styling: flat dark bar with a soft primary pill behind the
+                // active icon and uniform icon/label states.
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                ) {
+                    TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
+                    TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
+                    TabItem(
+                        nav, route, "notifications", "Notifications", Icons.Rounded.Notifications,
+                        badge = pendingRequests.size,
+                    )
+                    TabItem(nav, route, "seerr", "Seerr", Icons.Rounded.Language)
+                    TabItem(nav, route, "settings", "Settings", Icons.Rounded.Settings)
+                }
             }
         },
     ) { padding ->
@@ -293,9 +356,15 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             }
         }
 
+        // Quiet cross-fades instead of the default slide — the design
+        // system's motion tokens (theme/Motion.kt).
         NavHost(
             navController = nav,
             startDestination = "downloads",
+            enterTransition = { Motion.screenEnter },
+            exitTransition = { Motion.screenExit },
+            popEnterTransition = { Motion.screenPopEnter },
+            popExitTransition = { Motion.screenPopExit },
             modifier = Modifier.padding(padding),
         ) {
             composable("downloads") {
@@ -328,11 +397,18 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                         DetailPickInbox.offer(showId)
                         nav.navigate("show/$showId")
                     },
-                    onOpenSeerr = { nav.navigate("seerr") },
+                    // Seerr is a tab now — same single-top tab semantics.
+                    onOpenSeerr = {
+                        nav.navigate("seerr") {
+                            popUpTo("downloads") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
             }
             composable("seerr") {
-                SeerrScreen(requestsVm, snackbar) { nav.popBackStack() }
+                SeerrScreen(requestsVm, snackbar)
             }
             composable("settings") {
                 SettingsScreen(

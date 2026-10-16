@@ -45,9 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.SharedAction
 import com.nedal.cinejoyremote.presentation.SharedTitleState
@@ -55,6 +53,9 @@ import com.nedal.cinejoyremote.presentation.SharedTitleViewModel
 import com.nedal.cinejoyremote.share.CastMember
 import com.nedal.cinejoyremote.share.SharedTitle
 import com.nedal.cinejoyremote.share.TmdbRef
+import com.nedal.cinejoyremote.ui.components.Artwork
+import com.nedal.cinejoyremote.ui.components.MetaChip
+import com.nedal.cinejoyremote.ui.components.SectionRow
 
 // Netflix-style details page for a title shared into the app (SeriesGuide -> CineJoy).
 // Arabic is the primary language: the whole screen lays out right-to-left.
@@ -105,17 +106,11 @@ private fun TitleDetails(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Full-bleed backdrop with a dark gradient fading into the page colour.
         Box(Modifier.fillMaxWidth().height(380.dp)) {
-            val backdrop = t.backdropUrl ?: t.posterUrl
-            if (backdrop != null) {
-                AsyncImage(
-                    model = backdrop,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh))
-            }
+            Artwork(
+                model = t.backdropUrl ?: t.posterUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+            )
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
@@ -131,26 +126,18 @@ private fun TitleDetails(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 // Large poster thumbnail.
-                Box(
-                    Modifier
+                Artwork(
+                    model = t.posterUrl,
+                    contentDescription = t.title,
+                    modifier = Modifier
                         .width(120.dp)
                         .height(180.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                ) {
-                    t.posterUrl?.let {
-                        AsyncImage(
-                            model = it,
-                            contentDescription = t.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
+                        .clip(MaterialTheme.shapes.medium),
+                )
                 Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         t.title,
-                        fontSize = 26.sp,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
                         maxLines = 3,
@@ -172,7 +159,7 @@ private fun TitleDetails(
                     onClick = { onAction(SharedAction.DOWNLOAD) },
                     enabled = busy == null,
                     modifier = Modifier.weight(1f).height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = MaterialTheme.shapes.small,
                 ) {
                     if (busy == SharedAction.DOWNLOAD) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -186,7 +173,7 @@ private fun TitleDetails(
                     onClick = { onAction(SharedAction.LIBRARY) },
                     enabled = busy == null,
                     modifier = Modifier.weight(1f).height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = MaterialTheme.shapes.small,
                 ) {
                     if (busy == SharedAction.LIBRARY) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -205,7 +192,7 @@ private fun TitleDetails(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("القصة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                SectionRow(title = "القصة")
                 Text(
                     t.overview.ifBlank { "لا يوجد وصف متوفر لهذا العمل." },
                     style = MaterialTheme.typography.bodyLarge,
@@ -215,7 +202,7 @@ private fun TitleDetails(
 
             if (t.cast.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("طاقم التمثيل", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    SectionRow(title = "طاقم التمثيل")
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(t.cast) { CastCard(it) }
                     }
@@ -229,21 +216,13 @@ private fun TitleDetails(
 @Composable
 private fun CastCard(c: CastMember) {
     Column(Modifier.width(84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
+        Artwork(
+            model = c.photoUrl,
+            contentDescription = c.name,
+            modifier = Modifier
                 .size(72.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            c.photoUrl?.let {
-                AsyncImage(
-                    model = it,
-                    contentDescription = c.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
+                .clip(CircleShape),
+        )
         Spacer(Modifier.height(6.dp))
         Text(
             c.name,

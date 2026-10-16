@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,8 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,7 +77,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.Episode
@@ -89,6 +88,15 @@ import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.SourceInfoState
 import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
+import com.nedal.cinejoyremote.ui.components.Artwork
+import com.nedal.cinejoyremote.ui.components.DetailSkeleton
+import com.nedal.cinejoyremote.ui.components.ErrorState
+import com.nedal.cinejoyremote.ui.components.MetaChip
+import com.nedal.cinejoyremote.ui.components.SectionRow
+import com.nedal.cinejoyremote.ui.components.SmallIconButton
+import com.nedal.cinejoyremote.ui.components.StateDot
+import com.nedal.cinejoyremote.ui.theme.Radius
+import com.nedal.cinejoyremote.ui.theme.Spacing
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -140,22 +148,6 @@ private fun stateLabel(state: String): String = when (state) {
     else -> "Missing"
 }
 
-@Composable
-private fun StateDot(state: String) {
-    val color = when (state) {
-        "done" -> MaterialTheme.colorScheme.primary
-        "partial" -> MaterialTheme.colorScheme.tertiary
-        "downloading" -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.outline
-    }
-    Box(
-        Modifier
-            .size(8.dp)
-            .clip(RoundedCornerShape(50))
-            .background(color),
-    )
-}
-
 // ---------------------------------------------------------------- screen
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -194,8 +186,12 @@ fun ShowDetailScreen(
     }
 
     Scaffold(
+        // Edge-to-edge: the shell already insets this screen, so neither the
+        // inner Scaffold nor its top bar may add system-bar padding again.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Text(
                         show?.title ?: "…",
@@ -237,21 +233,21 @@ fun ShowDetailScreen(
         floatingActionButton = {
             if (show != null && episodes.isNotEmpty()) {
                 val isMovie = show?.type == "movie"
-                ExtendedFloatingActionButton(
+                // Icon FAB — the movie/series action is obvious from the icon
+                // in context, and the label was eating the episode list's width.
+                FloatingActionButton(
                     onClick = {
                         // Movies download straight into the picker; series start
                         // with everything that is still missing.
                         if (isMovie) sheetEpisode = episodes.firstOrNull()
                         else vm.queueMissing()
                     },
-                    icon = {
-                        Icon(
-                            if (isMovie) Icons.Rounded.Download else Icons.Rounded.PlaylistAdd,
-                            contentDescription = null,
-                        )
-                    },
-                    text = { Text(if (isMovie) "Download" else "Queue missing") },
-                )
+                ) {
+                    Icon(
+                        if (isMovie) Icons.Rounded.Download else Icons.Rounded.PlaylistAdd,
+                        contentDescription = if (isMovie) "Download" else "Queue missing",
+                    )
+                }
             }
         },
     ) { padding ->
@@ -260,10 +256,12 @@ fun ShowDetailScreen(
         }
 
         when {
-            show == null -> Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) { CircularProgressIndicator() }
+            show == null -> DetailSkeleton(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = Spacing.gutter),
+            )
 
             else -> {
                 val s = show!!
@@ -299,8 +297,13 @@ fun ShowDetailScreen(
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(
+                        start = Spacing.gutter,
+                        end = Spacing.gutter,
+                        top = Spacing.sm,
+                        bottom = Spacing.bottomClearance,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.listGap),
                 ) {
                     item(key = "header") {
                         if (detailStyle == DetailStyle.NETFLIX) {
@@ -402,16 +405,11 @@ private fun NetflixHeader(
     val backdrop = t?.backdropUrl ?: show.poster
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Box(Modifier.fillMaxWidth().height(300.dp)) {
-            if (backdrop != null) {
-                AsyncImage(
-                    model = backdrop,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh))
-            }
+            Artwork(
+                model = backdrop,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+            )
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
@@ -427,34 +425,25 @@ private fun NetflixHeader(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 // Poster thumbnail — TMDb first, library poster as fallback.
-                Box(
-                    Modifier
+                Artwork(
+                    model = poster,
+                    contentDescription = show.title,
+                    modifier = Modifier
                         .width(110.dp)
                         .height(165.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                ) {
-                    if (poster != null) {
-                        AsyncImage(
-                            model = poster,
-                            contentDescription = show.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
+                        .clip(MaterialTheme.shapes.medium),
+                    fallback = {
+                        Icon(
+                            if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
+                            null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    } else {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(
-                                if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
-                                null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
+                    },
+                )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         show.title,
-                        fontSize = 24.sp,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
                         maxLines = 3,
@@ -564,34 +553,21 @@ private fun NetflixHeader(
 @Composable
 private fun ShowHeader(show: LibraryShow, episodes: List<Episode>, doneCount: Int) {
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        val poster = show.poster
-        if (poster != null) {
-            AsyncImage(
-                model = poster,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .width(104.dp)
-                    .height(156.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            )
-        } else {
-            Box(
-                Modifier
-                    .width(104.dp)
-                    .height(156.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center,
-            ) {
+        Artwork(
+            model = show.poster,
+            contentDescription = show.title,
+            modifier = Modifier
+                .width(104.dp)
+                .height(156.dp)
+                .clip(MaterialTheme.shapes.medium),
+            fallback = {
                 Icon(
                     if (show.type == "movie") Icons.Rounded.Movie else Icons.Rounded.Tv,
                     null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-        }
+            },
+        )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
             Text(
                 show.title,
@@ -644,27 +620,13 @@ private fun ShowHeader(show: LibraryShow, episodes: List<Episode>, doneCount: In
 @Composable
 private fun SeasonHeader(season: Int, eps: List<Episode>, onQueue: () -> Unit) {
     val done = eps.count { it.state == "done" }
-    Row(
-        Modifier.fillMaxWidth().padding(top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column {
-            Text(
-                if (season <= 0) "Specials" else "Season $season",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                "$done of ${eps.size} downloaded",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (done < eps.size) {
-            TextButton(onClick = onQueue) { Text("Queue season") }
-        }
-    }
+    SectionRow(
+        title = if (season <= 0) "Specials" else "Season $season",
+        subtitle = "$done of ${eps.size} downloaded",
+        modifier = Modifier.padding(top = 6.dp),
+        actionLabel = if (done < eps.size) "Queue season" else null,
+        onAction = onQueue,
+    )
 }
 
 // ---------------------------------------------------------------- episode row
@@ -682,34 +644,23 @@ private fun EpisodeCard(
     var menuOpen by remember { mutableStateOf(false) }
 
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val still = ep.still
-                if (still != null) {
-                    AsyncImage(
-                        model = still,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .width(112.dp)
-                            .height(63.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                    )
-                } else {
-                    Box(
-                        Modifier
-                            .width(112.dp)
-                            .height(63.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.Movie, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
+                Artwork(
+                    model = ep.still,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .width(112.dp)
+                        .height(63.dp)
+                        .clip(RoundedCornerShape(Radius.xs)),
+                    fallback = {
+                        Icon(Icons.Rounded.Movie, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         if (isMovie) ep.name.ifBlank { "Full movie" }
@@ -840,22 +791,27 @@ private fun EpisodeCard(
 
                 Spacer(Modifier.weight(1f))
 
-                IconButton(onClick = onWatched, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        if (ep.watched) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
-                        contentDescription = if (ep.watched) "Watched" else "Mark watched",
-                        tint = if (ep.watched) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                // 34dp chips inside 48dp touch targets (SmallIconButton).
+                SmallIconButton(
+                    icon = if (ep.watched) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
+                    contentDescription = if (ep.watched) "Watched" else "Mark watched",
+                    onClick = onWatched,
+                    tint = if (ep.watched) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    visualSize = 34.dp,
+                    iconSize = 24.dp,
+                    background = null,
+                )
                 Box {
-                    IconButton(onClick = { menuOpen = !menuOpen }, modifier = Modifier.size(34.dp)) {
-                        Icon(
-                            Icons.Rounded.MoreVert,
-                            contentDescription = "Episode actions",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    SmallIconButton(
+                        icon = Icons.Rounded.MoreVert,
+                        contentDescription = "Episode actions",
+                        onClick = { menuOpen = !menuOpen },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        visualSize = 34.dp,
+                        iconSize = 24.dp,
+                        background = null,
+                    )
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("Get subtitles") },
@@ -969,21 +925,10 @@ private fun SourcePickerSheet(
                     )
                 }
 
-                is SourceInfoState.Failed -> Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(vertical = 12.dp),
-                ) {
-                    Text(
-                        "Could not reach the PC: ${s.message}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    OutlinedButton(onClick = { vm.loadSource(episode.key, source) }) {
-                        Icon(Icons.Rounded.Refresh, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Retry")
-                    }
-                }
+                is SourceInfoState.Failed -> ErrorState(
+                    message = "Could not reach the PC: ${s.message}",
+                    onRetry = { vm.loadSource(episode.key, source) },
+                )
 
                 is SourceInfoState.Ready -> SourcePane(
                     vm = vm,

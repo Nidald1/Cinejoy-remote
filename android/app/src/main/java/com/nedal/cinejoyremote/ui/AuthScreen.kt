@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,8 +33,14 @@ fun AuthScreen(vm: AuthViewModel = viewModel()) {
     var password by remember { mutableStateOf("") }
     val valid = email.contains("@") && password.length >= 6
 
+    // Edge-to-edge: pad for the status/navigation bars and let the keyboard
+    // push the form up instead of covering the password field.
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .imePadding()
+            .padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("CineJoy Remote", style = MaterialTheme.typography.headlineMedium)

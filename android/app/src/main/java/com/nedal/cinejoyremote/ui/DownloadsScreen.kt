@@ -36,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -62,10 +61,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nedal.cinejoyremote.domain.Device
 import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
+import com.nedal.cinejoyremote.ui.components.DeviceRow
+import com.nedal.cinejoyremote.ui.components.EmptyState
+import com.nedal.cinejoyremote.ui.components.SmallIconButton
+import com.nedal.cinejoyremote.ui.theme.Spacing
+import com.nedal.cinejoyremote.ui.theme.StatusColors
 import coil.compose.AsyncImage
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -174,7 +177,7 @@ fun DownloadsScreen(
         sortMode,
     )
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = Spacing.gutter)) {
         Spacer(Modifier.height(4.dp))
         DeviceRow(devices, selected, onSelect = devicesVm::select)
 
@@ -191,7 +194,7 @@ fun DownloadsScreen(
                 ).forEachIndexed { i, (label, count) ->
                     val isSelected = mediaTab == i
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = MaterialTheme.shapes.small,
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surfaceContainerHighest,
                         modifier = Modifier
@@ -221,7 +224,7 @@ fun DownloadsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     modifier = Modifier.weight(1f),
                 ) {
@@ -234,7 +237,7 @@ fun DownloadsScreen(
                                 accent = when (i) {
                                     0 -> MaterialTheme.colorScheme.secondary
                                     1 -> MaterialTheme.colorScheme.error
-                                    else -> Color(0xFF34D399)
+                                    else -> StatusColors.Success
                                 },
                                 onClick = { segment = i },
                                 modifier = Modifier.weight(1f),
@@ -276,58 +279,41 @@ fun DownloadsScreen(
         }
 
         LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(Spacing.listGap),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                top = Spacing.sm,
+                bottom = Spacing.bottomClearance,
+            ),
         ) {
             if (tasks.isEmpty()) {
                 item(key = "empty") {
-                    Column(
-                        Modifier.fillMaxWidth().padding(top = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("⬇", style = MaterialTheme.typography.displayMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Text("No downloads yet", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Queue episodes from the Library tab and they show up here live.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    EmptyState(
+                        emoji = "⬇",
+                        title = "No downloads yet",
+                        message = "Queue episodes from the Library tab and they show up here live.",
+                        modifier = Modifier.fillMaxWidth().padding(top = 64.dp),
+                    )
                 }
             } else if (shown.isEmpty()) {
                 item(key = "empty-seg") {
-                    Column(
-                        Modifier.fillMaxWidth().padding(top = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            when (segment) {
-                                0 -> "🎬"
-                                1 -> "✅"
-                                else -> "📦"
-                            },
-                            style = MaterialTheme.typography.displayMedium,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            when (segment) {
-                                0 -> "Nothing downloading"
-                                1 -> "Nothing failed"
-                                else -> "Nothing finished yet"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            when (segment) {
-                                0 -> "Queued downloads run here live with speed and progress."
-                                1 -> "Failed downloads land here with the reason and a Retry button."
-                                else -> "Completed downloads collect here with their final size."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    EmptyState(
+                        emoji = when (segment) {
+                            0 -> "🎬"
+                            1 -> "✅"
+                            else -> "📦"
+                        },
+                        title = when (segment) {
+                            0 -> "Nothing downloading"
+                            1 -> "Nothing failed"
+                            else -> "Nothing finished yet"
+                        },
+                        message = when (segment) {
+                            0 -> "Queued downloads run here live with speed and progress."
+                            1 -> "Failed downloads land here with the reason and a Retry button."
+                            else -> "Completed downloads collect here with their final size."
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 64.dp),
+                    )
                 }
             } else {
                 items(shown, key = { "t-" + it.taskId }) { task ->
@@ -394,7 +380,7 @@ private fun SegmentTab(
     // All three pills render the exact same parts (dot + label + count badge)
     // at the same fixed height, so the row stays straight whatever the counts.
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.small,
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
         else Color.Transparent,
         modifier = modifier
@@ -452,19 +438,16 @@ private fun MoreMenu(
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(
+        SmallIconButton(
+            icon = Icons.Rounded.MoreVert,
+            contentDescription = "More download actions",
             onClick = { open = !open },
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            Icon(
-                Icons.Rounded.MoreVert,
-                contentDescription = "More download actions",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
+            tint = MaterialTheme.colorScheme.primary,
+            visualSize = 44.dp,
+            iconSize = 24.dp,
+            background = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = MaterialTheme.shapes.small,
+        )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
                 text = { Text("Pause all downloads") },
@@ -520,7 +503,7 @@ private fun QueueToggle(
     onQueuePaused: (Boolean) -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -542,70 +525,29 @@ private fun QueueToggle(
 }
 
 @Composable
-fun DeviceRow(devices: List<Device>, selected: String?, onSelect: (String) -> Unit) {
-    if (devices.isEmpty()) {
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                "No PC seen yet — open the PC app and sign in with the same account.",
-                Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        return
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (d in devices) {
-            if (d.deviceId == selected) {
-                Button(
-                    onClick = {},
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    modifier = Modifier.height(40.dp),
-                ) { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            } else {
-                OutlinedButton(
-                    onClick = { onSelect(d.deviceId) },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    modifier = Modifier.height(40.dp),
-                ) { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            }
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-}
-
-@Composable
 private fun taskColor(task: DownloadTask): androidx.compose.ui.graphics.Color =
     when (task.state) {
-        "done" -> androidx.compose.ui.graphics.Color(0xFF34D399)
+        "done" -> StatusColors.Success
         "error" -> MaterialTheme.colorScheme.error
-        "paused" -> androidx.compose.ui.graphics.Color(0xFFFBBF24)
-        "downloading", "resolving" -> androidx.compose.ui.graphics.Color(0xFF38BDF8)
-        else -> androidx.compose.ui.graphics.Color(0xFF94A3B8)
+        "paused" -> StatusColors.Warning
+        "downloading", "resolving" -> StatusColors.Info
+        else -> StatusColors.Neutral
     }
 
 @Composable
 private fun SortButton(sortMode: Int, onSelect: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(
+        SmallIconButton(
+            icon = Icons.Rounded.Sort,
+            contentDescription = "Sort downloads",
             onClick = { open = !open },
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            Icon(
-                Icons.Rounded.Sort,
-                contentDescription = "Sort downloads",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
+            tint = MaterialTheme.colorScheme.primary,
+            visualSize = 44.dp,
+            iconSize = 24.dp,
+            background = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = MaterialTheme.shapes.small,
+        )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             SORT_OPTIONS.forEachIndexed { i, label ->
                 DropdownMenuItem(
@@ -640,7 +582,7 @@ fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> U
     var confirmDelete by remember(task.taskId) { mutableStateOf(false) }
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         // Frosted top sheen — the Morphe card gradient, kept subtle.
@@ -760,7 +702,7 @@ fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> U
                                 IconAction(
                                     Icons.Rounded.PlayArrow,
                                     "Resume download",
-                                    tint = Color(0xFF34D399),
+                                    tint = StatusColors.Success,
                                 ) { onAction("resume") }
                                 IconAction(
                                     Icons.Rounded.Stop,
@@ -772,7 +714,7 @@ fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> U
                             "error" -> IconAction(
                                 Icons.Rounded.Refresh,
                                 "Retry download",
-                                tint = Color(0xFF38BDF8),
+                                tint = StatusColors.Info,
                             ) { onAction("retry") }
                         }
                         Spacer(Modifier.weight(1f))
@@ -821,7 +763,7 @@ fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> U
 
 @Composable
 private fun PosterThumb(poster: String?, accent: Color) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = MaterialTheme.shapes.extraSmall
     if (poster.isNullOrBlank()) {
         Box(
             Modifier
@@ -878,15 +820,8 @@ private fun IconAction(
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onClick: () -> Unit,
 ) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(17.dp))
-    }
+    // 32dp chip inside a 48dp touch target (SmallIconButton).
+    SmallIconButton(icon = icon, contentDescription = desc, onClick = onClick, tint = tint)
 }
 
 fun formatBytes(n: Long): String {

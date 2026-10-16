@@ -15,8 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.nedal.cinejoyremote.ui.theme.Spacing
 import com.nedal.cinejoyremote.ui.theme.ThemeController
 import com.nedal.cinejoyremote.ui.theme.ThemeMode
 import com.nedal.cinejoyremote.domain.AuthState
@@ -42,7 +41,10 @@ import com.nedal.cinejoyremote.presentation.AuthViewModel
 import com.nedal.cinejoyremote.presentation.ConnectionViewModel
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
+import com.nedal.cinejoyremote.ui.components.SectionCard
+import com.nedal.cinejoyremote.ui.components.SectionCard
 import com.nedal.cinejoyremote.presentation.UpdateUiState
+import com.nedal.cinejoyremote.ui.components.SectionCard
 import com.nedal.cinejoyremote.presentation.UpdateViewModel
 import java.time.Duration
 import java.time.Instant
@@ -72,7 +74,7 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = Spacing.gutter),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ---- appearance: dark / light / OLED
@@ -412,21 +414,3 @@ private fun pcAgeLabel(lastSeen: String): String? {
     }
 }
 
-@Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            content()
-        }
-    }
-}

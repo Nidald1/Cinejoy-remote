@@ -13,8 +13,8 @@ android {
         applicationId = "com.nedal.cinejoyremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 500148
-        versionName = "5.0.148"
+        versionCode = 500149
+        versionName = "5.0.149"
     }
 
     // CI signed builds: env vars set by .github/workflows/release.yml.

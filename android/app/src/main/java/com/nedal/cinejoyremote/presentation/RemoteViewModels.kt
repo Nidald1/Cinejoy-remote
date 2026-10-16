@@ -46,8 +46,18 @@ class DevicesViewModel(
         _selected.value = deviceId
     }
 
+    // Keep the selection valid against the live device list: pair when none is
+    // chosen, and re-pair when the chosen id no longer exists (account switch,
+    // reinstalled PC). Without revalidation a stale id silently captured every
+    // command — cj_commands rows the real PC never polls. An empty list is left
+    // alone: it may be a transient fetch error, and dropping the pairing on it
+    // would break "No PC selected" flows for no reason.
     fun autoSelect(devices: List<Device>) {
-        if (_selected.value == null && devices.isNotEmpty()) _selected.value = devices.first().deviceId
+        if (devices.isEmpty()) return
+        val current = _selected.value
+        if (current == null || devices.none { it.deviceId == current }) {
+            _selected.value = devices.first().deviceId
+        }
     }
 }
 

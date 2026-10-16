@@ -34,14 +34,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.SnackbarHostState
-import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.SeerrRequest
 import com.nedal.cinejoyremote.presentation.RequestsViewModel
+import com.nedal.cinejoyremote.ui.components.Artwork
+import com.nedal.cinejoyremote.ui.components.EmptyState
+import com.nedal.cinejoyremote.ui.theme.Radius
+import com.nedal.cinejoyremote.ui.theme.Spacing
 
 // Notifications — Seerr requests waiting for a decision.
 //
@@ -83,31 +84,26 @@ fun NotificationsScreen(
     ) {
         if (requests.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp),
-                ) {
-                    Text("🔔", style = MaterialTheme.typography.displayMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Nothing waiting", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "When someone requests a movie or a series through Seerr it\n" +
-                            "appears here, and you decide whether to download it.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    SeerrOpenButton(onOpenSeerr)
-                }
+                EmptyState(
+                    emoji = "🔔",
+                    title = "Nothing waiting",
+                    message = "When someone requests a movie or a series through Seerr it\n" +
+                        "appears here, and you decide whether to download it.",
+                    action = { SeerrOpenButton(onOpenSeerr) },
+                )
             }
             return@PullToRefreshBox
         }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(
+                start = Spacing.gutter,
+                end = Spacing.gutter,
+                top = Spacing.sm,
+                bottom = Spacing.bottomClearance,
+            ),
+            verticalArrangement = Arrangement.spacedBy(Spacing.listGap),
         ) {
             item(key = "seerr-header") {
                 Row(
@@ -154,26 +150,25 @@ private fun RequestCard(
     onReject: () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (req.poster != null) {
-                AsyncImage(
+                Artwork(
                     model = req.poster,
                     contentDescription = req.title,
-                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(width = 58.dp, height = 86.dp)
-                        .clip(RoundedCornerShape(10.dp)),
+                        .clip(RoundedCornerShape(Radius.xs)),
                 )
                 Spacer(Modifier.width(12.dp))
             }
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(Radius.xs),
                         color = if (req.type == "tv") {
                             MaterialTheme.colorScheme.tertiaryContainer
                         } else {

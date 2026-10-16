@@ -65,7 +65,7 @@ fun UpdateDialog(
 
     Dialog(onDismissRequest = { onDismiss(info.version) }) {
         Surface(
-            shape = RoundedCornerShape(28.dp),
+            shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,
         ) {
@@ -184,7 +184,7 @@ private fun AvailableContent(
         )
         Spacer(Modifier.height(8.dp))
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceContainerHighest,
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -227,7 +227,7 @@ private fun AvailableContent(
     Button(
         onClick = { onDownload(info) },
         modifier = Modifier.fillMaxWidth().height(48.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.small,
     ) {
         Text("Download & install", style = MaterialTheme.typography.titleSmall)
     }
@@ -292,7 +292,7 @@ private fun PermissionContent(info: UpdateInfo, onDownload: (UpdateInfo) -> Unit
     Button(
         onClick = { onDownload(info) },
         modifier = Modifier.fillMaxWidth().height(48.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.small,
     ) {
         Text("Continue", style = MaterialTheme.typography.titleSmall)
     }
@@ -312,7 +312,7 @@ private fun ReadyContent(onReopen: () -> Unit) {
     OutlinedButton(
         onClick = onReopen,
         modifier = Modifier.fillMaxWidth().height(46.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.small,
     ) {
         Text("Open install screen again", style = MaterialTheme.typography.titleSmall)
     }
@@ -321,7 +321,7 @@ private fun ReadyContent(onReopen: () -> Unit) {
 @Composable
 private fun ErrorContent(message: String, onRetry: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.errorContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -336,7 +336,7 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
     Button(
         onClick = onRetry,
         modifier = Modifier.fillMaxWidth().height(46.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.small,
     ) {
         Text("Try again", style = MaterialTheme.typography.titleSmall)
     }
