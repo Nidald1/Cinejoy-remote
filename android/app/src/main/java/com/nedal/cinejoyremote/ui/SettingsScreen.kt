@@ -79,6 +79,12 @@ fun SettingsScreen(
     ) {
         // ---- appearance: dark / light / OLED
         SectionCard(title = "Appearance") {
+            Text(
+                "Design v2 · 5.1.0",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (m in ThemeMode.entries) {
                     val sel = themeMode == m

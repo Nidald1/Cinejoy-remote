@@ -52,6 +52,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,11 +70,20 @@ import com.nedal.cinejoyremote.presentation.LibraryViewModel
 import com.nedal.cinejoyremote.ui.components.Artwork
 import com.nedal.cinejoyremote.ui.components.BarePosterTile
 import com.nedal.cinejoyremote.ui.components.ClassicPosterTile
-import com.nedal.cinejoyremote.ui.components.DeviceRow
 import com.nedal.cinejoyremote.ui.components.EmptyState
 import com.nedal.cinejoyremote.ui.theme.Spacing
 import com.nedal.cinejoyremote.share.TmdbFetcher
 import com.nedal.cinejoyremote.share.TmdbRef
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.delay
+import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.Link
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +93,7 @@ fun LibraryScreen(
     factory: androidx.lifecycle.ViewModelProvider.Factory,
     snackbar: SnackbarHostState,
     onOpenShow: (String) -> Unit,
+    onOpenSearch: () -> Unit = {},
 ) {
     val devices by devicesVm.devices.collectAsState()
     val selected by devicesVm.selectedDeviceId.collectAsState()
@@ -122,6 +133,60 @@ fun LibraryScreen(
             "tv" to shows.count { it.type == "tv" },
         )
     }
+    // Hero rotation pool: up to 8 newest titles with movies and series
+    // interleaved, so the banner always changes between DIFFERENT kinds of
+    // titles (spec: min 6, no back-to-back repeats — a distinct-items list
+    // can't repeat).
+    val heroItems = remember(filtered) {
+        val movies = filtered.filter { it.type == "movie" }
+        val series = filtered.filter { it.type == "tv" }
+        val mixed = ArrayList<LibraryShow>(8)
+        var m = 0
+        var s = 0
+        while (mixed.size < 8 && (m < movies.size || s < series.size)) {
+            if (m < movies.size) mixed.add(movies[m++])
+            if (mixed.size < 8 && s < series.size) mixed.add(series[s++])
+        }
+        mixed
+    }
+
+    // Design v2: search / sort / filter / add / refresh are top-bar icons —
+    // the old DeviceRow pill, the type pill farm and the inline search field
+    // are gone from the layout entirely.
+    var sortSheet by remember { mutableStateOf(false) }
+    var filterSheet by remember { mutableStateOf(false) }
+    ProvideTopBar(
+        title = "Library",
+        actions = listOf(
+            ChromeAction(Icons.Rounded.Search, "Search library") { onOpenSearch() },
+            ChromeAction(Icons.Rounded.Sort, "Sort library") { sortSheet = true },
+            ChromeAction(Icons.Rounded.FilterList, "Filter library") { filterSheet = true },
+            ChromeAction(Icons.Rounded.Link, "Add by link") { showAdd = true },
+            ChromeAction(Icons.Rounded.Refresh, "Refresh library") {
+                selected?.let { vm.refresh(it) }
+            },
+        ),
+    )
+    if (sortSheet) {
+        CineSheet(title = "Sort by", onDismiss = { sortSheet = false }) {
+            listOf(
+                "newest" to "Newest first",
+                "oldest" to "Oldest first",
+                "name" to "Name A→Z",
+                "name_desc" to "Name Z→A",
+            ).forEach { (mode, label) ->
+                SheetOption(label, selected = sortMode == mode, onClick = { sortMode = mode; sortSheet = false })
+            }
+        }
+    }
+    if (filterSheet) {
+        CineSheet(title = "Show", onDismiss = { filterSheet = false }) {
+            listOf("all" to "All", "movie" to "Movies", "tv" to "Series").forEach { (mode, label) ->
+                val count = typeCounts.firstOrNull { it.first == mode }?.second ?: 0
+                SheetOption("$label  ·  $count", selected = typeFilter == mode, onClick = { typeFilter = mode; filterSheet = false })
+            }
+        }
+    }
 
     LaunchedEffect(devices) { devicesVm.autoSelect(devices) }
     LaunchedEffect(addedShowId) {
@@ -134,27 +199,13 @@ fun LibraryScreen(
         notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() }
     }
 
-    Scaffold(
-        // Edge-to-edge: the shell already insets this screen, so the inner
-        // Scaffold must not add system-bar padding again.
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        floatingActionButton = {
-            // Icon FAB — the label "Add link" ate 120dp of grid width and the
-            // plus is unambiguous this close to the Library.
-            FloatingActionButton(
-                onClick = { showAdd = true },
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = "Add link")
-            }
-        },
-    ) { inner ->
+    Column(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             // The wall is tighter and the tiles a touch bigger, like the app
             // it borrows its look from; classic keeps the old metrics exactly.
             columns = GridCells.Adaptive(minSize = if (netflix) 142.dp else 124.dp),
             modifier = Modifier
-                .fillMaxSize()
-                .padding(inner),
+                .fillMaxSize(),
             // On the 4/8 grid: the Netflix wall packs tighter than classic.
             horizontalArrangement = Arrangement.spacedBy(if (netflix) Spacing.sm else Spacing.md),
             verticalArrangement = Arrangement.spacedBy(if (netflix) Spacing.md else Spacing.lg),
@@ -165,105 +216,6 @@ fun LibraryScreen(
                 bottom = Spacing.bottomClearance,
             ),
         ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Box(Modifier.weight(1f)) {
-                        DeviceRow(devices, selected, onSelect = devicesVm::select)
-                    }
-                    var sortMenu by remember { mutableStateOf(false) }
-                    IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
-                        Icon(
-                            if (searchOpen) Icons.Rounded.Close else Icons.Rounded.Search,
-                            contentDescription = "Search library",
-                        )
-                    }
-                    Box {
-                        IconButton(onClick = { sortMenu = !sortMenu }) {
-                            Icon(Icons.Rounded.Sort, contentDescription = "Sort library")
-                        }
-                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                            listOf(
-                                "newest" to "Newest first",
-                                "oldest" to "Oldest first",
-                                "name" to "Name A→Z",
-                                "name_desc" to "Name Z→A",
-                            ).forEach { (mode, label) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (sortMode == mode) {
-                                                Icon(Icons.Rounded.Check, null, Modifier.size(18.dp))
-                                                Spacer(Modifier.width(6.dp))
-                                            }
-                                            Text(label)
-                                        }
-                                    },
-                                    onClick = { sortMode = mode; sortMenu = false },
-                                )
-                            }
-                        }
-                    }
-                    IconButton(
-                        onClick = { selected?.let { vm.refresh(it) } },
-                        enabled = !refreshing && selected != null,
-                    ) {
-                        if (refreshing) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "Refresh library")
-                        }
-                    }
-                }
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                // Movies | Series | All — two shelves instead of one mixed grid.
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(
-                        "all" to "All",
-                        "movie" to "Movies",
-                        "tv" to "Series",
-                    ).forEach { (mode, label) ->
-                        val selected = typeFilter == mode
-                        val count = typeCounts.firstOrNull { it.first == mode }?.second ?: 0
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { typeFilter = mode },
-                        ) {
-                            Text(
-                                "$label · $count",
-                                Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                                style = MaterialTheme.typography.labelLarge,
-                                textAlign = TextAlign.Center,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-            if (searchOpen) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        label = { Text("Search library") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
             if (filtered.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     if (shows.isEmpty()) {
@@ -287,14 +239,12 @@ fun LibraryScreen(
                     }
                 }
             }
-            // Full-bleed backdrop hero on the Netflix wall — the promoted
-            // title at the top, like the Netflix home screen. The newest
-            // addition, hidden while searching or filtering a single shelf.
-            if (netflix && query.isBlank() && typeFilter == "all") {
-                filtered.firstOrNull()?.let { hero ->
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
-                        LibraryHero(show = hero) { onOpenShow(hero.showId) }
-                    }
+            // Auto-rotating cinematic hero — up to 8 titles, movies and
+            // series interleaved, no back-to-back repeats (a static list of
+            // distinct items can't repeat). Hidden while filtering shelves.
+            if (heroItems.isNotEmpty() && typeFilter == "all") {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
+                    HeroPager(items = heroItems, onOpenShow = onOpenShow)
                 }
             }
             items(filtered, key = { it.showId }) { show ->
@@ -342,12 +292,81 @@ fun LibraryScreen(
     }
 }
 
-// ---------------------------------------------------------------- poster grid
-// Full-bleed hero for the Netflix wall: the promoted title's TMDb backdrop
-// (falling back to its poster) under a gradient scrim with the title and
-// synopsis — tapping it opens the same title page as a poster tile.
+// ---------------------------------------------------------------- hero pager
+// Design-v2 hero: auto-rotates every 6s through up to 8 different titles
+// (movies and series interleaved), crossfades via the pager, swipeable, with
+// page dots. Auto-advance pauses while the user is dragging, for 4s after a
+// swipe, and whenever the app is not in the foreground.
 @Composable
-private fun LibraryHero(show: LibraryShow, onClick: () -> Unit) {
+private fun HeroPager(
+    items: List<LibraryShow>,
+    onOpenShow: (String) -> Unit,
+) {
+    if (items.isEmpty()) return
+    val pagerState = rememberPagerState { items.size }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var inForeground by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            inForeground = event == Lifecycle.Event.ON_RESUME
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val dragging by pagerState.interactionSource.collectIsDraggedAsState()
+    var holdUntil by remember { mutableStateOf(0L) }
+    LaunchedEffect(dragging) {
+        if (!dragging) holdUntil = System.currentTimeMillis() + 4000
+    }
+    LaunchedEffect(pagerState, items.size) {
+        while (true) {
+            delay(6_000)
+            if (items.size < 2 || !inForeground || dragging ||
+                System.currentTimeMillis() < holdUntil
+            ) continue
+            pagerState.animateScrollToPage((pagerState.currentPage + 1) % items.size)
+        }
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth(),
+        ) { page ->
+            val show = items[page]
+            HeroSlide(show = show) { onOpenShow(show.showId) }
+        }
+        // Page dots.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            items.forEachIndexed { i, _ ->
+                val active = i == pagerState.currentPage
+                Box(
+                    Modifier
+                        .padding(horizontal = 3.dp)
+                        .clip(RoundedCornerShape(50))
+                        .size(width = if (active) 14.dp else 5.dp, height = 5.dp)
+                        .background(
+                            if (active) MaterialTheme.colorScheme.primary
+                            else Color.White.copy(alpha = 0.35f),
+                        ),
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- poster grid
+// One hero slide: full-bleed backdrop under a scrim with the type chip, year,
+// title, one-line synopsis and a compact Details action.
+@Composable
+private fun HeroSlide(show: LibraryShow, onClick: () -> Unit) {
     // Start with the mirrored poster so the hero paints instantly; upgrade to
     // the real backdrop once TMDb answers (rows without a TMDb id keep the
     // poster — search-per-row would hammer TMDb from a scrolling grid).
@@ -492,6 +511,69 @@ private fun AddLinkSheet(adding: Boolean, onDismiss: () -> Unit, onAdd: (String)
                     enabled = !adding && url.isNotBlank(),
                     onClick = { onAdd(url.trim()) },
                 ) { Text(if (adding) "Adding…" else "Add") }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- search
+// Full search screen opened from the Library top bar: one focused field over
+// a poster grid of live results. (The old inline field that squeezed the
+// grid is gone.)
+@Composable
+fun LibrarySearchScreen(
+    devicesVm: DevicesViewModel,
+    vm: LibraryViewModel,
+    onOpenShow: (String) -> Unit,
+) {
+    val shows by vm.shows.collectAsState()
+    var query by rememberSaveable { mutableStateOf("") }
+    val netflix = LibraryStyleController.mode == LibraryStyle.NETFLIX
+
+    ProvideTopBar(title = "Search", actions = emptyList())
+
+    val results = remember(shows, query) {
+        val q = query.trim()
+        if (q.isEmpty()) emptyList()
+        else shows.filter { it.title.contains(q, ignoreCase = true) }
+            .sortedByDescending { it.addedAt ?: "" }
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = Spacing.gutter)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Search library") },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm),
+        )
+        if (query.isBlank()) {
+            CineEmpty(
+                icon = Icons.Rounded.Search,
+                message = "Type a title to search the PC library.",
+            )
+        } else if (results.isEmpty()) {
+            CineEmpty(
+                icon = Icons.Rounded.Search,
+                message = "Nothing in your library matches \u201C$query\u201D.",
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = if (netflix) 142.dp else 124.dp),
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(if (netflix) Spacing.sm else Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                contentPadding = PaddingValues(top = Spacing.md, bottom = Spacing.bottomClearance),
+            ) {
+                items(results, key = { "s-" + it.showId }) { show ->
+                    if (netflix) {
+                        BarePosterTile(show, onClick = { onOpenShow(show.showId) }, onLongClick = {})
+                    } else {
+                        ClassicPosterTile(show, onClick = { onOpenShow(show.showId) }, onLongClick = {})
+                    }
+                }
             }
         }
     }

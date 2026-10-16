@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,8 +18,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Pause
@@ -64,7 +68,6 @@ import androidx.compose.ui.unit.dp
 import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
-import com.nedal.cinejoyremote.ui.components.DeviceRow
 import com.nedal.cinejoyremote.ui.components.EmptyState
 import com.nedal.cinejoyremote.ui.components.SmallIconButton
 import com.nedal.cinejoyremote.ui.theme.Spacing
@@ -130,6 +133,8 @@ fun DownloadsScreen(
     devicesVm: DevicesViewModel,
     vm: DownloadsViewModel,
     snackbar: SnackbarHostState,
+    onBrowseLibrary: () -> Unit = {},
+    onOpenSeerr: () -> Unit = {},
 ) {
     val devices by devicesVm.devices.collectAsState()
     val selected by devicesVm.selectedDeviceId.collectAsState()
@@ -149,6 +154,28 @@ fun DownloadsScreen(
     var sortMode by rememberSaveable { mutableIntStateOf(2) }
     // "failed" / "finished" bulk delete confirmation (which group + its rows).
     var bulkDelete by remember { mutableStateOf<Pair<String, List<DownloadTask>>?>(null) }
+    // Design v2: filter / sort / overflow live as top-bar icons opening
+    // bottom sheets — no more pill farms or octagon buttons in the layout.
+    var sheet by remember { mutableStateOf<String?>(null) } // "filter" | "sort" | "more"
+    ProvideTopBar(
+        title = "Downloads",
+        actions = buildList {
+            if (selected != null) {
+                add(ChromeAction(Icons.Rounded.FilterList, "Filter downloads") { sheet = "filter" })
+                add(ChromeAction(Icons.Rounded.Sort, "Sort downloads") { sheet = "sort" })
+                add(
+                    ChromeAction(
+                        if (queuePaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                        if (queuePaused) "Resume queue" else "Pause queue",
+                    ) {
+                        queuePaused = !queuePaused
+                        vm.queuePause(queuePaused)
+                    },
+                )
+                add(ChromeAction(Icons.Rounded.MoreVert, "More download actions") { sheet = "more" })
+            }
+        },
+    )
 
     val mediaCounts = remember(tasks, showTypes) {
         listOf(
@@ -178,104 +205,49 @@ fun DownloadsScreen(
     )
 
     Column(Modifier.fillMaxSize().padding(horizontal = Spacing.gutter)) {
-        Spacer(Modifier.height(4.dp))
-        DeviceRow(devices, selected, onSelect = devicesVm::select)
-
-        // ---- media switcher: All | Movies | Series (parity with the Library)
-        if (selected != null) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // Thin banner — only when the queue actually IS paused.
+        if (queuePaused && selected != null) {
+            Surface(
+                color = StatusColors.Warning.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                listOf(
-                    "All" to mediaCounts[0],
-                    "Movies" to mediaCounts[1],
-                    "Series" to mediaCounts[2],
-                ).forEachIndexed { i, (label, count) ->
-                    val isSelected = mediaTab == i
-                    Surface(
-                        shape = MaterialTheme.shapes.small,
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                Row(
+                    Modifier.height(32.dp).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Queue paused",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = StatusColors.Warning,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "Resume",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier
-                            .weight(1f)
-                            .clickable { mediaTab = i },
-                    ) {
-                        Text(
-                            "$label · $count",
-                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                            .clickable {
+                                queuePaused = false
+                                vm.queuePause(false)
+                            }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
         }
 
-        // ---- segment switcher: Active | Failed | Finished, with the sort menu
+        // ---- slim underline tabs: Active | Failed | Finished
         if (selected != null) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Row(Modifier.padding(4.dp)) {
-                        SEGMENTS.forEachIndexed { i, label ->
-                            SegmentTab(
-                                label = label,
-                                count = counts[i],
-                                selected = segment == i,
-                                accent = when (i) {
-                                    0 -> MaterialTheme.colorScheme.secondary
-                                    1 -> MaterialTheme.colorScheme.error
-                                    else -> StatusColors.Success
-                                },
-                                onClick = { segment = i },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
-                SortButton(sortMode) { sortMode = it }
-                MoreMenu(
-                    failedCount = failed.size,
-                    finishedCount = finished.size,
-                    onPauseAll = { selected?.let { vm.command(it, "pause-all") } },
-                    onResumeAll = { selected?.let { vm.command(it, "resume-all") } },
-                    onQueueMissing = { selected?.let { vm.command(it, "queue-missing") } },
-                    onQueueClear = { selected?.let { vm.command(it, "queue-clear") } },
-                    onRetryAll = { failed.forEach { t -> selected?.let { vm.command(it, "retry", t.taskId) } } },
-                    onBulkDelete = { kind ->
-                        bulkDelete = kind to when (kind) {
-                            "failed" -> failed
-                            else -> finished
-                        }
-                    },
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-
-            // ---- bulk actions live in the ⋮ menu; only the queue toggle stays
-            if (segment == 0) {
-                Spacer(Modifier.height(4.dp))
-                QueueToggle(
-                    queuePaused = queuePaused,
-                    onQueuePaused = { checked ->
-                        queuePaused = checked
-                        vm.queuePause(checked)
-                    },
-                )
-                Spacer(Modifier.height(4.dp))
-            }
+            UnderlineTabs(
+                labels = SEGMENTS,
+                counts = counts,
+                selected = segment,
+                onSelect = { segment = it },
+            )
         }
 
         LazyColumn(
@@ -287,32 +259,30 @@ fun DownloadsScreen(
         ) {
             if (tasks.isEmpty()) {
                 item(key = "empty") {
-                    EmptyState(
-                        emoji = "⬇",
-                        title = "No downloads yet",
-                        message = "Queue episodes from the Library tab and they show up here live.",
-                        modifier = Modifier.fillMaxWidth().padding(top = 64.dp),
+                    CineEmpty(
+                        icon = Icons.Rounded.Download,
+                        message = "Nothing here yet. Queue episodes from the Library or Seerr.",
+                        modifier = Modifier.fillMaxWidth(),
+                        actionLabel = "Browse Library",
+                        onAction = onBrowseLibrary,
                     )
                 }
             } else if (shown.isEmpty()) {
                 item(key = "empty-seg") {
-                    EmptyState(
-                        emoji = when (segment) {
-                            0 -> "🎬"
-                            1 -> "✅"
-                            else -> "📦"
-                        },
-                        title = when (segment) {
-                            0 -> "Nothing downloading"
-                            1 -> "Nothing failed"
-                            else -> "Nothing finished yet"
+                    CineEmpty(
+                        icon = when (segment) {
+                            0 -> Icons.Rounded.Download
+                            1 -> Icons.Rounded.ErrorOutline
+                            else -> Icons.Rounded.CheckCircleOutline
                         },
                         message = when (segment) {
-                            0 -> "Queued downloads run here live with speed and progress."
-                            1 -> "Failed downloads land here with the reason and a Retry button."
-                            else -> "Completed downloads collect here with their final size."
+                            0 -> "Nothing downloading right now."
+                            1 -> "No failed downloads."
+                            else -> "Finished downloads will collect here."
                         },
-                        modifier = Modifier.fillMaxWidth().padding(top = 64.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        actionLabel = if (segment == 0) "Open Seerr" else null,
+                        onAction = if (segment == 0) onOpenSeerr else null,
                     )
                 }
             } else {
@@ -335,9 +305,50 @@ fun DownloadsScreen(
                 }
             }
         }
+    }    // ---- top-bar sheets: filter / sort / overflow
+    when (sheet) {
+        "filter" -> CineSheet(title = "Show", onDismiss = { sheet = null }) {
+            listOf("All" to mediaCounts[0], "Movies" to mediaCounts[1], "Series" to mediaCounts[2])
+                .forEachIndexed { i, (label, count) ->
+                    SheetOption(
+                        label = "$label  ·  $count",
+                        selected = mediaTab == i,
+                        onClick = { mediaTab = i; sheet = null },
+                    )
+                }
+        }
+        "sort" -> CineSheet(title = "Sort by", onDismiss = { sheet = null }) {
+            SORT_OPTIONS.forEachIndexed { i, label ->
+                SheetOption(
+                    label = label,
+                    selected = sortMode == i,
+                    onClick = { sortMode = i; sheet = null },
+                )
+            }
+        }
+        "more" -> CineSheet(title = "Downloads", onDismiss = { sheet = null }) {
+            SheetOption("Pause all", onClick = { selected?.let { vm.command(it, "pause-all") }; sheet = null })
+            SheetOption("Resume all", onClick = { selected?.let { vm.command(it, "resume-all") }; sheet = null })
+            SheetOption("Fix queue missing", onClick = { selected?.let { vm.command(it, "queue-missing") }; sheet = null })
+            SheetOption("Clear all downloads", onClick = { selected?.let { vm.command(it, "queue-clear") }; sheet = null })
+            if (failed.isNotEmpty()) {
+                SheetOption("Retry all failed (${failed.size})", onClick = {
+                    failed.forEach { t -> selected?.let { vm.command(it, "retry", t.taskId) } }; sheet = null
+                })
+                SheetOption("Delete all failed (${failed.size})", danger = true, onClick = {
+                    bulkDelete = "failed" to failed; sheet = null
+                })
+            }
+            if (finished.isNotEmpty()) {
+                SheetOption("Delete all finished (${finished.size})", danger = true, onClick = {
+                    bulkDelete = "finished" to finished; sheet = null
+                })
+            }
+        }
     }
 
     // ---- bulk delete confirmation (failed / finished, from the ⋮ menu)
+
     bulkDelete?.let { (kind, rows) ->
         val dev = selected
         AlertDialog(
@@ -368,158 +379,51 @@ fun DownloadsScreen(
     }
 }
 
+/** Text-only underline tabs with tiny count badges — 40dp tall. */
 @Composable
-private fun SegmentTab(
-    label: String,
-    count: Int,
-    selected: Boolean,
-    accent: androidx.compose.ui.graphics.Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun UnderlineTabs(
+    labels: List<String>,
+    counts: List<Int>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
 ) {
-    // All three pills render the exact same parts (dot + label + count badge)
-    // at the same fixed height, so the row stays straight whatever the counts.
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else Color.Transparent,
-        modifier = modifier
-            .height(38.dp)
-            .clickable(onClick = onClick),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Box(
+    Row(Modifier.fillMaxWidth().height(40.dp)) {
+        labels.forEachIndexed { i, label ->
+            val isSelected = selected == i
+            Column(
                 Modifier
-                    .size(7.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(if (selected) accent else MaterialTheme.colorScheme.outline),
-            )
-            Spacer(Modifier.width(5.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(5.dp))
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = if (selected) accent.copy(alpha = 0.18f)
-                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable { onSelect(i) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Text(
-                    count.toString(),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MoreMenu(
-    failedCount: Int,
-    finishedCount: Int,
-    onPauseAll: () -> Unit,
-    onResumeAll: () -> Unit,
-    onQueueMissing: () -> Unit,
-    onQueueClear: () -> Unit,
-    onRetryAll: () -> Unit,
-    onBulkDelete: (String) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        SmallIconButton(
-            icon = Icons.Rounded.MoreVert,
-            contentDescription = "More download actions",
-            onClick = { open = !open },
-            tint = MaterialTheme.colorScheme.primary,
-            visualSize = 44.dp,
-            iconSize = 24.dp,
-            background = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = MaterialTheme.shapes.small,
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text("Pause all downloads") },
-                onClick = { onPauseAll(); open = false },
-            )
-            DropdownMenuItem(
-                text = { Text("Resume all downloads") },
-                onClick = { onResumeAll(); open = false },
-            )
-            DropdownMenuItem(
-                text = { Text("Fix queue missing") },
-                onClick = { onQueueMissing(); open = false },
-            )
-            DropdownMenuItem(
-                text = { Text("Clear all downloads") },
-                onClick = { onQueueClear(); open = false },
-            )
-            // Contextual bulk action for the current segment (replaces the old
-            // per-tab "Retry all" / "Clear all" buttons).
-            if (failedCount > 0) {
-                DropdownMenuItem(
-                    text = { Text("Retry all failed ($failedCount)") },
-                    onClick = { onRetryAll(); open = false },
-                )
-                DropdownMenuItem(
-                    text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (counts[i] > 0) {
+                        Spacer(Modifier.width(4.dp))
                         Text(
-                            "Delete all failed ($failedCount)",
-                            color = MaterialTheme.colorScheme.error,
+                            counts[i].toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    },
-                    onClick = { onBulkDelete("failed"); open = false },
+                    }
+                }
+                Spacer(Modifier.height(5.dp))
+                Box(
+                    Modifier
+                        .width(if (isSelected) 22.dp else 0.dp)
+                        .height(2.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.primary),
                 )
             }
-            if (finishedCount > 0) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            "Delete all finished ($finishedCount)",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    },
-                    onClick = { onBulkDelete("finished"); open = false },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun QueueToggle(
-    queuePaused: Boolean,
-    onQueuePaused: (Boolean) -> Unit,
-) {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Pause queue", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    "Hold new downloads on the PC",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = queuePaused, onCheckedChange = onQueuePaused)
         }
     }
 }
@@ -533,48 +437,6 @@ private fun taskColor(task: DownloadTask): androidx.compose.ui.graphics.Color =
         "downloading", "resolving" -> StatusColors.Info
         else -> StatusColors.Neutral
     }
-
-@Composable
-private fun SortButton(sortMode: Int, onSelect: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        SmallIconButton(
-            icon = Icons.Rounded.Sort,
-            contentDescription = "Sort downloads",
-            onClick = { open = !open },
-            tint = MaterialTheme.colorScheme.primary,
-            visualSize = 44.dp,
-            iconSize = 24.dp,
-            background = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = MaterialTheme.shapes.small,
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            SORT_OPTIONS.forEachIndexed { i, label ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            fontWeight = if (i == sortMode) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (i == sortMode) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface,
-                        )
-                    },
-                    trailingIcon = {
-                        if (i == sortMode) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    },
-                    onClick = { onSelect(i); open = false },
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun TaskCard(task: DownloadTask, poster: String? = null, onAction: (String) -> Unit) {

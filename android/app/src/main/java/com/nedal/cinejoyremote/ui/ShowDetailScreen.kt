@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PlaylistAdd
@@ -66,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -267,6 +269,18 @@ fun ShowDetailScreen(
                 val s = show!!
                 val bySeason = episodes.groupBy { it.season }.toSortedMap()
                 val doneCount = episodes.count { it.state == "done" }
+                // Design v2 season selector: ONE "Season N ▾" field opens a
+                // sheet and only the chosen season renders below — the old
+                // every-season-stacked page is gone. The choice is remembered
+                // per series.
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val seasons = bySeason.keys.toList()
+                var chosenSeason by rememberSaveable(s.showId, seasons) {
+                    mutableStateOf(SeasonMemory.get(context, s.showId, seasons.firstOrNull() ?: 0))
+                }
+                if (chosenSeason !in seasons) chosenSeason = seasons.firstOrNull() ?: 0
+                var seasonSheet by remember { mutableStateOf(false) }
+                ProvideTopBar(title = s.title, actions = emptyList())
 
                 // Netflix-style header (Settings -> Title page) enriches itself with
                 // the same TMDb metadata the share sheet uses: backdrop, genres,
@@ -327,26 +341,48 @@ fun ShowDetailScreen(
                             )
                         }
                     } else {
-                        bySeason.forEach { (season, eps) ->
-                            item(key = "season-$season") {
-                                SeasonHeader(
-                                    season = season,
-                                    eps = eps,
-                                    onQueue = { vm.queueSeason(season) },
-                                )
-                            }
-                            items(eps, key = { it.key }) { ep ->
-                                EpisodeCard(
-                                    ep = ep,
-                                    isMovie = false,
-                                    onDownload = { sheetEpisode = ep },
-                                    onWatched = { vm.watchedToggle(ep.key) },
-                                    onSubsDownload = { vm.subsDownload(ep.key) },
-                                    onSubsPublish = { vm.subsPublish(ep.key) },
-                                    onSubsClear = { vm.subsClear(ep.key) },
-                                    onDelete = { confirmDelete = ep },
-                                )
-                            }
+                        item(key = "season-select") {
+                            SeasonSelectorField(
+                                season = chosenSeason,
+                                episodeCount = bySeason[chosenSeason]?.size ?: 0,
+                                onClick = { seasonSheet = true },
+                            )
+                        }
+                        item(key = "season-$chosenSeason") {
+                            SeasonHeader(
+                                season = chosenSeason,
+                                eps = bySeason[chosenSeason].orEmpty(),
+                                onQueue = { vm.queueSeason(chosenSeason) },
+                            )
+                        }
+                        items(bySeason[chosenSeason].orEmpty(), key = { it.key }) { ep ->
+                            EpisodeCard(
+                                ep = ep,
+                                isMovie = false,
+                                onDownload = { sheetEpisode = ep },
+                                onWatched = { vm.watchedToggle(ep.key) },
+                                onSubsDownload = { vm.subsDownload(ep.key) },
+                                onSubsPublish = { vm.subsPublish(ep.key) },
+                                onSubsClear = { vm.subsClear(ep.key) },
+                                onDelete = { confirmDelete = ep },
+                            )
+                        }
+                    }
+                }
+
+                if (seasonSheet) {
+                    CineSheet(title = "Season", onDismiss = { seasonSheet = false }) {
+                        seasons.forEach { season ->
+                            SheetOption(
+                                label = (if (season <= 0) "Specials" else "Season $season") +
+                                    "  ·  ${bySeason[season]?.size ?: 0} ep",
+                                selected = season == chosenSeason,
+                                onClick = {
+                                    chosenSeason = season
+                                    SeasonMemory.set(context, s.showId, season)
+                                    seasonSheet = false
+                                },
+                            )
                         }
                     }
                 }
@@ -1273,5 +1309,60 @@ private fun AkwamPane(
                 Text("Start download")
             }
         }
+    }
+}
+
+// ---------------------------------------------------------- season selector
+// The v2 "Season 1 ▾" field: one compact row that opens a bottom sheet with
+// every season (plus episode counts); only the selected season's episodes
+// render below it. Replaces the old stacked all-seasons page.
+@Composable
+private fun SeasonSelectorField(
+    season: Int,
+    episodeCount: Int,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier
+                .height(48.dp)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (season <= 0) "Specials" else "Season $season",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "$episodeCount ep",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Rounded.KeyboardArrowDown,
+                contentDescription = "Pick season",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+// Last-shown season per series, one small prefs file (survives restarts).
+private object SeasonMemory {
+    private const val PREF = "cj_detail"
+    fun get(context: android.content.Context, showId: String, fallback: Int): Int =
+        context.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+            .getInt("season_$showId", fallback)
+    fun set(context: android.content.Context, showId: String, season: Int) {
+        context.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+            .edit().putInt("season_$showId", season).apply()
     }
 }

@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,22 +35,22 @@ import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
-import androidx.compose.material3.Badge
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,8 +67,11 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -153,6 +155,14 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val topBarBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
     var bottomBarVisible by remember { mutableStateOf(true) }
     var bottomScrollAcc by remember { mutableStateOf(0f) }
+
+    // Design-v2 chrome: the slim bar reads its title + contextual icons from
+    // here (screens publish via ProvideTopBar), and the avatar opens the
+    // profile sheet that took over sign-out and the PC picker.
+    val topBar = remember { TopBarController() }
+    var profileOpen by remember { mutableStateOf(false) }
+    val shellAuth by authVm.authState.collectAsState(initial = AuthState.Loading)
+    val signedInEmail = (shellAuth as? AuthState.SignedIn)?.email
     val bottomBarConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -244,76 +254,25 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
         devices.mapNotNull { it.lastSeen }.maxByOrNull { it }?.let { pcAgeLabel(it) }
     }
 
+    // Screens publish their top-bar icons through the provided controller.
+    CompositionLocalProvider(LocalTopBarController provides topBar) {
     Scaffold(
         // Both bar controllers sit above the content so every screen's
         // LazyColumn/LazyVerticalGrid drives them through nested scroll.
         modifier = Modifier
             .nestedScroll(topBarBehavior.nestedScrollConnection)
             .nestedScroll(bottomBarConnection),
+        // Seerr is TRULY full screen — the app's own chrome (top bar too)
+        // leaves while the tab is open; only system insets remain.
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "▶",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Column(
-                            // The chip is the fastest path to the answer when it
-                            // turns red: tapping it opens Connection, which names
-                            // the broken hop and can wake the PC.
-                            modifier = Modifier.clickable {
-                                nav.navigate("settings") { launchSingleTop = true }
-                            },
-                        ) {
-                            Text(
-                                "CineJoy Remote",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    Modifier
-                                        .size(7.dp)
-                                        .clip(RoundedCornerShape(50))
-                                        .background(
-                                            if (online) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.outline,
-                                        ),
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Text(
-                                    // "PC offline" alone is unactionable — say how
-                                    // long the PC has been silent.
-                                    if (online) "PC online" else "PC offline" +
-                                        (lastSeenAge?.let { " · $it" } ?: ""),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-                scrollBehavior = topBarBehavior,
-                actions = {
-                    IconButton(onClick = onSignOut) {
-                        Icon(Icons.Rounded.Logout, contentDescription = "Sign out")
-                    }
-                },
-            )
+            if (route != "seerr") {
+                CineTopBar(
+                    controller = topBar,
+                    online = online,
+                    avatarLetter = (signedInEmail?.firstOrNull() ?: '●').uppercaseChar(),
+                    onAvatarClick = { profileOpen = true },
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
@@ -324,20 +283,27 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 enter = slideInVertically { it } + expandVertically() + fadeIn(),
                 exit = slideOutVertically { it } + shrinkVertically() + fadeOut(),
             ) {
-                // Morphe styling: flat dark bar with a soft primary pill behind the
-                // active icon and uniform icon/label states.
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                ) {
-                    TabItem(nav, route, "downloads", "Downloads", Icons.Rounded.Download)
-                    TabItem(nav, route, "library", "Library", Icons.Rounded.VideoLibrary)
-                    TabItem(
-                        nav, route, "notifications", "Notifications", Icons.Rounded.Notifications,
-                        badge = pendingRequests.size,
+                // The Seerr tab is truly full screen — the app's own bar
+                // leaves entirely while it is open (Seerr's web nav is the
+                // navigation there), then returns on any other tab.
+                if (route != "seerr") {
+                    SlimBottomNav(
+                        items = listOf(
+                            TabSpec("downloads", "Downloads", Icons.Rounded.Download),
+                            TabSpec("library", "Library", Icons.Rounded.VideoLibrary),
+                            TabSpec("notifications", "Alerts", Icons.Rounded.Notifications, pendingRequests.size),
+                            TabSpec("seerr", "Seerr", Icons.Rounded.Language),
+                            TabSpec("settings", "Settings", Icons.Rounded.Settings),
+                        ),
+                        current = route,
+                        onSelect = { target ->
+                            nav.navigate(target) {
+                                popUpTo("downloads") { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                     )
-                    TabItem(nav, route, "seerr", "Seerr", Icons.Rounded.Language)
-                    TabItem(nav, route, "settings", "Settings", Icons.Rounded.Settings)
                 }
             }
         },
@@ -373,7 +339,15 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             }
             composable("library") {
                 val vm: LibraryViewModel = viewModel(factory = factory)
-                LibraryScreen(devicesVm, vm, factory, snackbar) { showId ->
+                LibraryScreen(
+                    devicesVm, vm, factory, snackbar,
+                    onOpenShow = { showId -> nav.navigate("show/${Uri.encode(showId)}") },
+                    onOpenSearch = { nav.navigate("search") },
+                )
+            }
+            composable("search") {
+                val vm: LibraryViewModel = viewModel(factory = factory)
+                LibrarySearchScreen(devicesVm, vm) { showId ->
                     nav.navigate("show/${Uri.encode(showId)}")
                 }
             }
@@ -408,7 +382,30 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 )
             }
             composable("seerr") {
-                SeerrScreen(requestsVm, snackbar)
+                // ONE WebView for the app's lifetime (B4.4): the session is an
+                // Activity-scoped ViewModel, so tab switches and rotation reuse
+                // the same live page instead of reloading it.
+                val seerrSession: SeerrSession = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        override fun <T : androidx.lifecycle.ViewModel> create(
+                            modelClass: Class<T>,
+                            extras: CreationExtras,
+                        ): T {
+                            val app = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
+                                as android.app.Application
+                            val handle = extras.createSavedStateHandle()
+                            @Suppress("UNCHECKED_CAST")
+                            return SeerrSession(app, handle) as T
+                        }
+                    },
+                )
+                SeerrScreen(
+                    requestsVm,
+                    snackbar,
+                    seerrSession,
+                    selectedDevice = selectedDevice,
+                    onGoHome = { nav.navigate("downloads") { launchSingleTop = true } },
+                )
             }
             composable("settings") {
                 SettingsScreen(
@@ -419,6 +416,37 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                     viewModel(factory = factory),
                 )
             }
+        }
+    }
+    } // CompositionLocalProvider(LocalTopBarController)
+
+    if (profileOpen) {
+        var confirmSignOut by remember { mutableStateOf(false) }
+        ProfileSheet(
+            email = signedInEmail,
+            devices = devices.map { it.name to pcOnline(it.lastSeen) },
+            selectedDevice = selectedDevice?.let { id -> devices.firstOrNull { it.deviceId == id }?.name },
+            onSelectDevice = { name ->
+                devices.firstOrNull { it.name == name }?.let { devicesVm.select(it.deviceId) }
+                profileOpen = false
+            },
+            onSignOut = { confirmSignOut = true },
+            onDismiss = { profileOpen = false },
+        )
+        if (confirmSignOut) {
+            AlertDialog(
+                onDismissRequest = { confirmSignOut = false },
+                title = { Text("Sign out?") },
+                text = { Text("You will need the account email and password to sign back in.") },
+                confirmButton = {
+                    TextButton(onClick = { confirmSignOut = false; profileOpen = false; onSignOut() }) {
+                        Text("Sign out", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") }
+                },
+            )
         }
     }
 
@@ -434,46 +462,3 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     }
 }
 
-@Composable
-private fun RowScope.TabItem(
-    nav: androidx.navigation.NavHostController,
-    current: String,
-    route: String,
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    badge: Int = 0,
-) {
-    // The show detail page belongs to the Library tab visually.
-    val selected = current == route || (route == "library" && current.startsWith("show/"))
-    NavigationBarItem(
-        selected = selected,
-        onClick = {
-            nav.navigate(route) {
-                popUpTo("downloads") { saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
-        },
-        icon = {
-            // Pending Seerr requests waiting for a decision.
-            if (badge > 0) {
-                Badge {
-                    Text(if (badge > 9) "9+" else badge.toString())
-                }
-            }
-            Icon(
-                icon,
-                contentDescription = label,
-                modifier = Modifier.size(24.dp),
-            )
-        },
-        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium) },
-        colors = NavigationBarItemDefaults.colors(
-            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            selectedTextColor = MaterialTheme.colorScheme.primary,
-            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    )
-}
