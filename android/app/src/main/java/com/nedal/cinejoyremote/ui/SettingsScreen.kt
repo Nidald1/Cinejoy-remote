@@ -80,7 +80,7 @@ fun SettingsScreen(
         // ---- appearance: dark / light / OLED
         SectionCard(title = "Appearance") {
             Text(
-                "Design v2 · 5.1.0",
+                "Design v3 · 3.0",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp),

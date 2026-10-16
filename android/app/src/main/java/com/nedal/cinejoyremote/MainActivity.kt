@@ -9,10 +9,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.SideEffect
 import androidx.core.view.WindowCompat
 import com.nedal.cinejoyremote.share.SharedLinkInbox
-import com.nedal.cinejoyremote.ui.CinejoyApp
 import com.nedal.cinejoyremote.ui.DetailStyleController
 import com.nedal.cinejoyremote.ui.LibraryStyleController
 import com.nedal.cinejoyremote.ui.theme.CinejoyTheme
+import com.nedal.cinejoyremote.ui.v3.V3App
+import com.nedal.cinejoyremote.ui.v3.V3Theme
 import com.nedal.cinejoyremote.ui.theme.ThemeController
 import com.nedal.cinejoyremote.ui.theme.ThemeMode
 
@@ -42,7 +43,12 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = light
                 }
             }
-            CinejoyTheme(mode) { CinejoyApp() }
+            // v3 shell inside the legacy theme: CinejoyTheme seeds the app's
+            // typography baseline; V3Theme applies the v3 palette (dark-first,
+            // Appearance toggle intact) for the shell and its Material components.
+            CinejoyTheme(mode) {
+                V3Theme { V3App() }
+            }
         }
     }
 
