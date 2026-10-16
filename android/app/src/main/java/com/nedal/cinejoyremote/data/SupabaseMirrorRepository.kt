@@ -177,11 +177,29 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
         }.decodeSingle<CommandRowDto>()
 
         val deadline = System.currentTimeMillis() + timeoutMs
+        // Poll the same command row until the PC answers or the deadline
+        // passes. TRANSIENT network errors (DNS blips, mobile-data/Wi-Fi
+        // handoff, TLS stalls) must NOT abort the wait: the PC keeps
+        // resolving meanwhile, and a single DNS hiccup would otherwise kill
+        // an in-flight source capture that already worked. Ride through
+        // failures until the deadline; back off slightly on consecutive
+        // errors to avoid hammering a struggling connection.
+        var consecutiveFailures = 0
         while (System.currentTimeMillis() < deadline) {
-            delay(700)
-            val rows = client.from("cj_commands").select {
-                filter { eq("id", inserted.id) }
-            }.decodeList<CommandRowDto>()
+            val rows = try {
+                client.from("cj_commands").select {
+                    filter { eq("id", inserted.id) }
+                }.decodeList<CommandRowDto>()
+                    .also { consecutiveFailures = 0 }
+            } catch (e: kotlinx.serialization.SerializationException) {
+                throw e // malformed payload is a real bug, not a network blip
+            } catch (e: Exception) {
+                consecutiveFailures++
+                if (consecutiveFailures > (timeoutMs / 1000).toInt()) throw e
+                // Poll errors can't exceed the deadline — sleep extra and retry.
+                delay(((700L * (consecutiveFailures + 1)).coerceAtMost(5000L)))
+                continue
+            }
             val row = rows.firstOrNull() ?: continue
             when (row.status) {
                 "done" -> {
@@ -201,7 +219,9 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
                     throw IllegalStateException(msg)
                 }
             }
-            // still pending/running — keep polling
+            // still pending/running — keep polling (errors just reset the
+            // failure counter quietly)
+            delay(700)
         }
         throw IllegalStateException("PC did not answer in time — is the app running?")
     }
