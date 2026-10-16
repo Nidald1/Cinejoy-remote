@@ -97,9 +97,15 @@ class SeerrSession(
         }
     }
 
+    // The PC sends the Tailscale address first (works on mobile data) and the
+    // LAN address as fallback (works at home without Tailscale). If the
+    // primary cannot be reached, the fallback is tried once automatically.
+    private var fallbackUrl: String? = null
+
     /** Load Seerr (idempotent — same URL is never re-loaded on tab switches). */
-    fun open(target: String) {
+    fun open(target: String, fallback: String? = null) {
         if (url == target && error == null) return
+        fallbackUrl = fallback?.takeIf { it != target }
         url = target
         error = null
         loading = true
@@ -179,6 +185,17 @@ class SeerrSession(
 
         override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error_: WebResourceError?) {
             if (request?.isForMainFrame != true) return
+            // Unreachable primary (e.g. the Tailscale address while the VPN is
+            // off): switch once to the LAN URL before showing the error page.
+            val fb = fallbackUrl
+            if (fb != null && url != fb) {
+                fallbackUrl = null
+                url = fb
+                error = null
+                loading = true
+                view?.loadUrl(fb)
+                return
+            }
             error = error_?.description?.toString() ?: "Seerr is unreachable"
             loading = false
         }

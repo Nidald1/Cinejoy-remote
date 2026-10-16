@@ -590,6 +590,10 @@ class RequestsViewModel(
     // session; the API key never leaves the PC.
     private val _seerrUrl = MutableStateFlow<String?>(null)
     val seerrUrl: StateFlow<String?> = _seerrUrl
+    // Secondary address the PC sent (LAN when the primary is the Tailscale
+    // one) — the WebView falls back to it when the primary is unreachable.
+    private val _seerrFallback = MutableStateFlow<String?>(null)
+    val seerrFallback: StateFlow<String?> = _seerrFallback
 
     private val _seerrLoading = MutableStateFlow(false)
     val seerrLoading: StateFlow<Boolean> = _seerrLoading
@@ -609,8 +613,12 @@ class RequestsViewModel(
                 return@launch
             }
             val url = r.getOrNull()?.get("url")?.jsonPrimitive?.contentOrNull
+            val lan = r.getOrNull()?.get("lanUrl")?.jsonPrimitive?.contentOrNull
             if (url.isNullOrBlank()) _error.value = "the PC did not return a Seerr address"
-            else _seerrUrl.value = url
+            else {
+                _seerrFallback.value = lan?.takeIf { it != url }
+                _seerrUrl.value = url
+            }
         } finally {
             _seerrLoading.value = false
         }

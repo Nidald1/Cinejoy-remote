@@ -90,7 +90,8 @@ fun SeerrScreen(
     LaunchedEffect(selectedDevice) {
         if (selectedDevice != null && session.url == null && !loading) vm.openSeerr()
     }
-    LaunchedEffect(url) { url?.let { session.open(it) } }
+    val fallbackUrl by vm.seerrFallback.collectAsState()
+    LaunchedEffect(url, fallbackUrl) { url?.let { session.open(it, fallbackUrl) } }
     LaunchedEffect(vmError) { vmError?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
 
     ProvideTopBar(title = "Seerr", actions = emptyList())

@@ -46,9 +46,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -149,12 +147,33 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val scope = rememberCoroutineScope()
     var backAt by remember { mutableLongStateOf(0L) }
 
-    // Hide-on-scroll bars: the top bar collapses fully on scroll down and
-    // springs back on scroll up (enterAlways); the bottom nav slides away the
-    // same way, so lists get the whole screen while reading.
-    val topBarBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
+    // Hide-on-scroll bars. These connections are pure OBSERVERS (they always
+    // return Offset.Zero), so lists keep every pixel of their scroll — the
+    // bars just watch child scroll deltas and slide out of the way.
+    //
+    // (The previous wiring used TopAppBarDefaults.enterAlwaysScrollBehavior
+    // for the top bar. That behavior's TopAppBarState.heightOffsetLimit is
+    // negative-infinity until a real M3 TopAppBar measures itself and sets a
+    // limit; our slim custom bar never did, so the behavior swallowed EVERY
+    // scroll delta forever and no screen in the app could scroll at all.)
+    var topBarVisible by remember { mutableStateOf(true) }
+    var topScrollAcc by remember { mutableStateOf(0f) }
     var bottomBarVisible by remember { mutableStateOf(true) }
     var bottomScrollAcc by remember { mutableStateOf(0f) }
+    val topBarConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                val dy = available.y
+                if (dy == 0f) return Offset.Zero
+                if ((dy > 0f) != (topScrollAcc > 0f)) topScrollAcc = 0f
+                topScrollAcc += dy
+                if (topScrollAcc <= -48f) { topBarVisible = false; topScrollAcc = 0f }
+                else if (topScrollAcc >= 160f) { topBarVisible = true; topScrollAcc = 0f }
+                return Offset.Zero
+            }
+        }
+    }
 
     // Design-v2 chrome: the slim bar reads its title + contextual icons from
     // here (screens publish via ProvideTopBar), and the avatar opens the
@@ -184,7 +203,10 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
         }
     }
     // A freshly opened screen always shows the bars again.
-    LaunchedEffect(route) { bottomBarVisible = true; bottomScrollAcc = 0f }
+    LaunchedEffect(route) {
+        topBarVisible = true; topScrollAcc = 0f
+        bottomBarVisible = true; bottomScrollAcc = 0f
+    }
 
     // Update flow: silent check on launch; when a newer release exists on
     // GitHub (and wasn't dismissed for that exact version) the popup shows.
@@ -260,18 +282,24 @@ fun MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
         // Both bar controllers sit above the content so every screen's
         // LazyColumn/LazyVerticalGrid drives them through nested scroll.
         modifier = Modifier
-            .nestedScroll(topBarBehavior.nestedScrollConnection)
+            .nestedScroll(topBarConnection)
             .nestedScroll(bottomBarConnection),
         // Seerr is TRULY full screen — the app's own chrome (top bar too)
         // leaves while the tab is open; only system insets remain.
         topBar = {
             if (route != "seerr") {
-                CineTopBar(
-                    controller = topBar,
-                    online = online,
-                    avatarLetter = (signedInEmail?.firstOrNull() ?: '●').uppercaseChar(),
-                    onAvatarClick = { profileOpen = true },
-                )
+                AnimatedVisibility(
+                    visible = topBarVisible,
+                    enter = slideInVertically { -it } + expandVertically() + fadeIn(),
+                    exit = slideOutVertically { -it } + shrinkVertically() + fadeOut(),
+                ) {
+                    CineTopBar(
+                        controller = topBar,
+                        online = online,
+                        avatarLetter = (signedInEmail?.firstOrNull() ?: '●').uppercaseChar(),
+                        onAvatarClick = { profileOpen = true },
+                    )
+                }
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
