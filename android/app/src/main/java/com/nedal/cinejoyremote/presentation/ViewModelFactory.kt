@@ -15,6 +15,10 @@ class AppViewModelFactory(private val devicesVm: DevicesViewModel) : ViewModelPr
             RequestsViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(ShowDetailViewModel::class.java) ->
             ShowDetailViewModel(devicesVm = devicesVm) as T
+        // Shell-scoped: owns the multi-title source-fetch queue, so it must
+        // outlive any single screen (created once in V3MainShell).
+        modelClass.isAssignableFrom(FetchQueueViewModel::class.java) ->
+            FetchQueueViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(PcToolsViewModel::class.java) ->
             PcToolsViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(ConnectionViewModel::class.java) ->

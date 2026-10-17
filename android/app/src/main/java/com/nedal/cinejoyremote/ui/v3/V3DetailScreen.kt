@@ -42,7 +42,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,7 +49,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,51 +69,22 @@ import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
+import com.nedal.cinejoyremote.presentation.FetchQueueViewModel
 import com.nedal.cinejoyremote.presentation.SharedTitleState
 import com.nedal.cinejoyremote.presentation.SharedTitleViewModel
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
-import com.nedal.cinejoyremote.presentation.SourceInfoState
 import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
 import com.nedal.cinejoyremote.ui.DetailPickInbox
-import com.nedal.cinejoyremote.ui.v3.components.ErrorState
 import com.nedal.cinejoyremote.ui.v3.components.SheetRow
 import com.nedal.cinejoyremote.ui.v3.components.Skeleton
 import com.nedal.cinejoyremote.ui.v3.components.V3Pill
 import com.nedal.cinejoyremote.ui.v3.components.V3Sheet
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 // ---------------------------------------------------------------- helpers
-private fun JsonObject.str(key: String): String? = runCatching {
-    this[key]?.jsonPrimitive?.contentOrNull
-}.getOrNull()?.takeIf { it != "null" }
-
-private fun JsonObject.int(key: String): Int? = runCatching {
-    this[key]?.jsonPrimitive?.intOrNull
-}.getOrNull()
-
-private fun JsonObject.bool(key: String): Boolean? = runCatching {
-    this[key]?.jsonPrimitive?.booleanOrNull
-}.getOrNull()
-
-private fun JsonObject.arr(key: String): List<JsonObject> =
-    runCatching { (this[key] as? JsonArray) ?: return emptyList() }
-        .getOrNull()
-        ?.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
-        ?: emptyList()
-
+// The source-pane JSON helpers (str/int/bool/arr/heightOf) moved to
+// components/V3SourcePanes.kt with the panes themselves.
 private fun optStr(value: String?): String? = value?.takeIf { it.isNotBlank() && it != "null" }
-
-private fun heightOf(label: String?): Int? =
-    Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE).find(label ?: "")?.groupValues?.get(1)?.toIntOrNull()
-        ?: Regex("\\b(\\d{3,4})\\b").find(label ?: "")?.groupValues?.get(1)?.toIntOrNull()
 
 private fun stateLabel(state: String): String = when (state) {
     "done" -> "Downloaded"
@@ -137,15 +106,22 @@ private fun detailFormatBytes(n: Long): String {
  * V3 detail (spec mockups 03/04): artwork fills the top and the old opaque
  * top bar becomes a transparent back + more overlay; sticky CTA row pinned
  * at the bottom plays the movie/series primary action; episodes, season
- * field + sheet, and the source picker live below.
+ * field + sheet, and the fetch queue live below.
+ *
+ * Download does NOT open a picker any more: it enqueues the episode in the
+ * shell-scoped [FetchQueueViewModel], which resolves all 3 sources in the
+ * background so the user can keep queueing and browsing, then reviews
+ * everything on the fetch screen.
  */
 @Composable
 fun V3DetailScreen(
     devicesVm: DevicesViewModel,
     vm: ShowDetailViewModel,
+    fetchVm: FetchQueueViewModel,
     showId: String,
     snackbar: SnackbarHostState,
     onBack: () -> Unit,
+    onOpenFetch: () -> Unit = {},
 ) {
     LaunchedEffect(showId) { vm.load(showId) }
 
@@ -159,19 +135,35 @@ fun V3DetailScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<Episode?>(null) }
-    var sheetEpisode by remember { mutableStateOf<Episode?>(null) }
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
 
+    // Tap Download on as many episodes as you like: each one is queued for
+    // background link resolution and a snackbar points at the fetch screen.
+    // Nothing is modal, so browsing continues uninterrupted.
+    var queuedToast by remember { mutableStateOf(0) }
+    LaunchedEffect(queuedToast) {
+        if (queuedToast == 0) return@LaunchedEffect
+        snackbar.showSnackbar("Fetching links — see the fetch icon up top")
+    }
+    fun enqueue(s: LibraryShow, ep: Episode) {
+        fetchVm.enqueue(s, ep)
+        queuedToast++
+    }
+
     // Seerr accept hands this showId over (DetailPickInbox): once the episodes
-    // are loaded, raise the sources window straight away.
+    // are loaded, queue the first unfinished one and jump to the fetch screen
+    // so the user sees the sources resolve (the old "raise the picker" flow).
     var autoPicked by remember { mutableStateOf(false) }
     LaunchedEffect(showId, episodes) {
         if (autoPicked || episodes.isEmpty()) return@LaunchedEffect
         if (!DetailPickInbox.take(showId)) return@LaunchedEffect
         autoPicked = true
-        sheetEpisode = episodes.firstOrNull { it.state != "done" } ?: episodes.first()
+        val s = show ?: return@LaunchedEffect
+        val ep = episodes.firstOrNull { it.state != "done" } ?: episodes.first()
+        fetchVm.enqueue(s, ep)
+        onOpenFetch()
     }
 
     Box(Modifier.fillMaxSize().background(v3.background)) {
@@ -237,7 +229,7 @@ fun V3DetailScreen(
                                     V3EpisodeCard(
                                         ep = ep,
                                         isMovie = true,
-                                        onDownload = { sheetEpisode = ep },
+                                        onDownload = { enqueue(s, ep) },
                                         onWatched = { vm.watchedToggle(ep.key) },
                                         onSubsDownload = { vm.subsDownload(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
@@ -293,7 +285,7 @@ fun V3DetailScreen(
                                     V3EpisodeCard(
                                         ep = ep,
                                         isMovie = false,
-                                        onDownload = { sheetEpisode = ep },
+                                        onDownload = { enqueue(s, ep) },
                                         onWatched = { vm.watchedToggle(ep.key) },
                                         onSubsDownload = { vm.subsDownload(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
@@ -328,7 +320,7 @@ fun V3DetailScreen(
                                 val isMovie = s.type == "movie"
                                 Button(
                                     onClick = {
-                                        if (isMovie) sheetEpisode = episodes.firstOrNull()
+                                        if (isMovie) episodes.firstOrNull()?.let { enqueue(s, it) }
                                         else vm.queueMissing()
                                     },
                                     modifier = Modifier.weight(1f).height(44.dp),
@@ -448,10 +440,6 @@ fun V3DetailScreen(
                 TextButton(onClick = { confirmDelete = null }) { Text("Cancel", color = cc.textSecondary) }
             },
         )
-    }
-
-    sheetEpisode?.let { ep ->
-        V3SourcePickerSheet(vm = vm, episode = ep, onDismiss = { sheetEpisode = null; vm.clearSourceInfo() })
     }
 }
 
@@ -898,341 +886,3 @@ private fun seasonMemoryGet(context: android.content.Context, showId: String, fa
 
 private fun seasonMemorySet(context: android.content.Context, showId: String, season: Int) =
     V3SeasonMemory.set(context, showId, season)
-
-// ---------------------------------------------------------------- source picker
-
-@Composable
-private fun V3SourcePickerSheet(
-    vm: ShowDetailViewModel,
-    episode: Episode,
-    onDismiss: () -> Unit,
-) {
-    val c = v3
-    val state by vm.sourceInfo.collectAsState()
-    val busy by vm.busy.collectAsState()
-    var source by remember(episode.key) { mutableStateOf("cinejoy") }
-
-    LaunchedEffect(source, episode.key) { vm.loadSource(episode.key, source) }
-
-    // Lock dismissal while a lookup is genuinely in flight: the Cinejoy
-    // capture can run up to 120s and one stray backdrop tap used to throw it
-    // away and restart the whole wait. Idle must stay dismissable —
-    // queueDownload resets to Idle after Start download (spinner shows again
-    // but nothing is being fetched), and locking then would feel stuck. Back
-    // press still closes the sheet as a deliberate escape hatch.
-    val resolving = state is SourceInfoState.Loading
-    V3Sheet(title = "Choose a source", onDismiss = onDismiss, dismissable = !resolving) {
-        Text(
-            episode.name.ifBlank { "Episode ${episode.episode}" },
-            style = V3Type.body,
-            color = c.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(V3Space.md))
-        Row(horizontalArrangement = Arrangement.spacedBy(V3Space.sm)) {
-            listOf("cinejoy" to "Cinejoy", "movy" to "Movy", "akwam" to "AKWAM").forEach { (key, label) ->
-                V3Pill(label = label, selected = source == key, onClick = { source = key })
-            }
-        }
-
-        when (val s = state) {
-            SourceInfoState.Idle, SourceInfoState.Loading -> Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(V3Space.md),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-            ) {
-                androidx.compose.material3.CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                Text(
-                    if (source == "cinejoy") "Capturing a fresh Cinejoy link — this can take up to a minute…"
-                    else "Asking the PC for $source servers…",
-                    style = V3Type.body14,
-                    color = c.textSecondary,
-                )
-            }
-
-            is SourceInfoState.Failed -> ErrorState(
-                message = "Could not reach the PC: ${s.message}",
-                onRetry = { vm.loadSource(episode.key, source) },
-            )
-
-            is SourceInfoState.Ready -> V3SourcePane(vm, episode, s.source, s.data, busy == "start-download")
-        }
-    }
-}
-
-@Composable
-private fun V3SourcePane(
-    vm: ShowDetailViewModel,
-    episode: Episode,
-    source: String,
-    data: JsonObject,
-    starting: Boolean,
-) {
-    val c = v3
-    if (data.bool("ok") == false) {
-        Text(
-            data.str("error") ?: "The PC could not resolve this source.",
-            style = V3Type.body14,
-            color = c.error,
-        )
-        return
-    }
-    when (source) {
-        "movy" -> V3MovyPane(vm, episode, data, starting)
-        "akwam" -> V3AkwamPane(vm, episode, data, starting)
-        else -> V3CinejoyPane(vm, episode, data, starting)
-    }
-}
-
-@Composable
-private fun V3StartButton(starting: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        enabled = !starting,
-        shape = RoundedCornerShape(V3Radius.sm),
-        modifier = Modifier.fillMaxWidth().height(44.dp),
-    ) {
-        if (starting) {
-            androidx.compose.material3.CircularProgressIndicator(
-                Modifier.size(16.dp), strokeWidth = 2.dp, color = v3.onAccent,
-            )
-            Spacer(Modifier.width(V3Space.sm))
-            Text("Queueing…", style = V3Type.chip)
-        } else {
-            Icon(Icons.Rounded.Download, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(V3Space.sm))
-            Text("Start download", style = V3Type.chip)
-        }
-    }
-}
-
-// --- Cinejoy: one captured master, choose a variant (or Auto).
-@Composable
-private fun V3CinejoyPane(
-    vm: ShowDetailViewModel,
-    episode: Episode,
-    data: JsonObject,
-    starting: Boolean,
-) {
-    val c = v3
-    val streamError = data.str("streamError")
-    val server = data.str("server") ?: "nebula.bright67.online"
-    if (streamError != null) {
-        Text(
-            "Link unavailable ($streamError). Try Refresh, or use Movy/AKWAM for this item.",
-            style = V3Type.body14,
-            color = c.error,
-        )
-        OutlinedButton(onClick = { vm.loadSource(episode.key, "cinejoy") }, shape = RoundedCornerShape(V3Radius.sm)) {
-            Icon(Icons.Rounded.Refresh, null, Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Refresh", color = c.text)
-        }
-        return
-    }
-
-    val variants = data.arr("variants")
-    var selected by remember(episode.key) { mutableIntStateOf(-1) } // -1 = Auto
-    val options = listOf(-1) + variants.mapIndexed { i, _ -> i }
-
-    Column(verticalArrangement = Arrangement.spacedBy(V3Space.md)) {
-        Text(
-            "Server: $server · ${if (variants.isEmpty()) "single stream" else "${variants.size} quality variant(s)"}",
-            style = V3Type.caption,
-            color = c.textTertiary,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(V3Space.sm), modifier = Modifier.fillMaxWidth()) {
-            options.take(6).forEach { i ->
-                val label = if (i < 0) "Auto" else (variants[i].int("height")?.let { "${it}p" } ?: "stream")
-                V3Pill(label = label, selected = selected == i, onClick = { selected = i })
-            }
-        }
-        if (selected >= 0) {
-            variants[selected].str("size")?.takeIf { it.isNotBlank() }?.let { size ->
-                Text("Estimated size: $size", style = V3Type.caption, color = c.textTertiary)
-            }
-        }
-        V3StartButton(starting) {
-            val height = if (selected < 0) null else variants[selected].int("height")
-            val label = if (selected < 0) "Auto (best)" else height?.let { "${it}p" } ?: "stream"
-            vm.queueDownload(
-                episode.key,
-                buildMap {
-                    put("source", "cinejoy")
-                    put("qualityLabel", label)
-                    height?.let { put("quality", it.toString()) }
-                },
-            )
-        }
-    }
-}
-
-// --- Movy: pick a server, then a quality from that server.
-@Composable
-private fun V3MovyPane(
-    vm: ShowDetailViewModel,
-    episode: Episode,
-    data: JsonObject,
-    starting: Boolean,
-) {
-    val c = v3
-    val servers = data.arr("servers")
-    if (servers.isEmpty()) {
-        Text("No movy servers found for this item.", style = V3Type.body14, color = c.textSecondary)
-        return
-    }
-    val usable = servers.filter { it.bool("ok") == true && it.arr("sources").isNotEmpty() }
-    var selectedServer by remember(episode.key) {
-        mutableStateOf(usable.firstOrNull()?.str("key") ?: servers.firstOrNull()?.str("key"))
-    }
-    val current = servers.firstOrNull { it.str("key") == selectedServer }
-    val sources = current?.arr("sources") ?: emptyList()
-    val labels = current?.arr("sources")?.mapNotNull { it.str("quality") }?.distinct()
-        ?: current?.arr("qualities")?.mapNotNull { it.str("it") } ?: emptyList()
-    var selectedLabel by remember(episode.key, selectedServer) {
-        mutableStateOf(labels.firstOrNull())
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(V3Space.sm)) {
-        if (data.bool("rateLimited") == true) {
-            Text("Movy rate-limited some servers — wait a moment and Refresh.", style = V3Type.caption, color = c.warning)
-        }
-
-        // The server list scrolls inside a capped-height box so the quality
-        // chips and the Start button stay visible no matter how many servers.
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = 300.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(V3Space.sm),
-        ) {
-            servers.forEach { srv ->
-                val key = srv.str("key") ?: return@forEach
-                val ok = srv.bool("ok") == true && srv.arr("sources").isNotEmpty()
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(V3Radius.sm))
-                        .background(if (selectedServer == key) c.accent.copy(alpha = 0.14f) else c.surface)
-                        .clickable(enabled = ok) { selectedServer = key }
-                        .padding(horizontal = V3Space.md, vertical = V3Space.sm),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = selectedServer == key, onClick = null, enabled = ok)
-                    Column(Modifier.weight(1f)) {
-                        Text(key, style = V3Type.itemTitle, color = c.text)
-                        if (!ok) {
-                            Text(srv.str("error") ?: "no sources", style = V3Type.caption, color = c.textTertiary)
-                        } else {
-                            Row(
-                                Modifier.horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(V3Space.xs),
-                            ) {
-                                srv.arr("sources").mapNotNull { it.str("quality") }.distinct().take(6).forEach { q ->
-                                    val size = srv.arr("sources").firstOrNull { it.str("quality") == q }?.str("size")
-                                    Text(
-                                        if (size.isNullOrBlank()) q else "$q · $size",
-                                        style = V3Type.caption,
-                                        color = c.textTertiary,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (sources.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(V3Space.xs)) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(V3Space.sm),
-                ) {
-                    labels.distinct().take(6).forEach { label ->
-                        V3Pill(label = label, selected = selectedLabel == label, onClick = { selectedLabel = label })
-                    }
-                }
-                sources.firstOrNull { it.str("quality") == selectedLabel }?.str("size")
-                    ?.takeIf { it.isNotBlank() }?.let { size ->
-                        Text("File size: $size", style = V3Type.caption, color = c.textTertiary)
-                    }
-            }
-        }
-
-        V3StartButton(starting && selectedServer != null) {
-            val src = sources.firstOrNull { it.str("quality") == selectedLabel }
-            vm.queueDownload(
-                episode.key,
-                buildMap {
-                    put("source", "movy")
-                    selectedServer?.let { put("server", it) }
-                    selectedLabel?.let { put("qualityLabel", it) }
-                    (src?.int("height") ?: heightOf(selectedLabel))?.let { put("quality", it.toString()) }
-                },
-            )
-        }
-    }
-}
-
-// --- AKWAM: every quality/server row is its own download option.
-@Composable
-private fun V3AkwamPane(
-    vm: ShowDetailViewModel,
-    episode: Episode,
-    data: JsonObject,
-    starting: Boolean,
-) {
-    val c = v3
-    val entries = data.arr("entries")
-    if (entries.isEmpty()) {
-        Text("No AKWAM qualities found for this item.", style = V3Type.body14, color = c.textSecondary)
-        return
-    }
-    var selectedIndex by remember(episode.key) { mutableIntStateOf(0) }
-    val entry = entries.getOrNull(selectedIndex)
-
-    Column(verticalArrangement = Arrangement.spacedBy(V3Space.sm)) {
-        entries.forEachIndexed { i, e ->
-            val label = e.str("label") ?: "Option ${i + 1}"
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(V3Radius.sm))
-                    .background(if (selectedIndex == i) c.accent.copy(alpha = 0.14f) else c.surface)
-                    .clickable { selectedIndex = i }
-                    .padding(horizontal = V3Space.md, vertical = V3Space.sm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = selectedIndex == i, onClick = null)
-                Column(Modifier.weight(1f)) {
-                    Text(label, style = V3Type.itemTitle, color = c.text)
-                    Text(
-                        listOfNotNull(
-                            e.str("size")?.takeIf { it.isNotBlank() },
-                            e.str("server")?.let { "server $it" },
-                        ).joinToString(" · ").ifBlank { "quality option" },
-                        style = V3Type.caption,
-                        color = c.textTertiary,
-                    )
-                }
-            }
-        }
-
-        V3StartButton(starting && entry != null) {
-            val e = entry ?: return@V3StartButton
-            vm.queueDownload(
-                episode.key,
-                buildMap {
-                    put("source", "akwam")
-                    e.str("server")?.let { put("server", it) }
-                    e.str("label")?.let { put("qualityLabel", it) }
-                    heightOf(e.str("label"))?.let { put("quality", it.toString()) }
-                    e.str("downloadPage")?.let { put("sourceEntry", it) }
-                },
-            )
-        }
-    }
-}

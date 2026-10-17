@@ -8,8 +8,11 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -24,7 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -32,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.HourglassTop
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Tune
@@ -52,6 +59,7 @@ import com.nedal.cinejoyremote.presentation.AuthViewModel
 import com.nedal.cinejoyremote.presentation.ConnectionViewModel
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.DownloadsViewModel
+import com.nedal.cinejoyremote.presentation.FetchQueueViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
 import com.nedal.cinejoyremote.presentation.PcToolsViewModel
 import com.nedal.cinejoyremote.presentation.RequestsViewModel
@@ -69,8 +77,10 @@ import com.nedal.cinejoyremote.ui.SharedTitleScreen
 import com.nedal.cinejoyremote.ui.ShowDetailScreen
 import com.nedal.cinejoyremote.ui.UpdateDialog
 import com.nedal.cinejoyremote.ui.v3.components.BarVisibility
+import com.nedal.cinejoyremote.ui.v3.components.CountBadge
 import com.nedal.cinejoyremote.ui.v3.components.NavSpec
 import com.nedal.cinejoyremote.ui.v3.components.V3BottomNav
+import com.nedal.cinejoyremote.ui.v3.components.V3IconAction
 import com.nedal.cinejoyremote.ui.v3.components.V3TopBar
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -120,6 +130,11 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val factory = remember(devicesVm) { AppViewModelFactory(devicesVm) }
     val requestsVm: RequestsViewModel = viewModel(factory = factory)
     val downloadsVm: DownloadsViewModel = viewModel(factory = factory)
+    // Shell-scoped on purpose: the fetch queue keeps resolving sources while
+    // the user browses anywhere else in the app. Scoping it to a screen (like
+    // ShowDetailViewModel) would cancel an in-flight Cinejoy capture — the
+    // whole reason the old bottom sheet had to be replaced.
+    val fetchVm: FetchQueueViewModel = viewModel(factory = factory)
     val pendingRequests by requestsVm.requests.collectAsState()
     val tasks by downloadsVm.tasks.collectAsState()
     val backStack by nav.currentBackStackEntryAsState()
@@ -239,6 +254,11 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
 
     val fullscreen = route == "seerr" // Seerr owns the whole screen (spec §3.5)
     val activeDownloads = remember(tasks) { tasks.count { it.state in ACTIVE_TASK_STATES } }
+    // Fetch badge: red count while sources are resolving, green dot once
+    // something is ready to start downloading — so the queue is discoverable
+    // from every screen without a 6th bottom-nav tab.
+    val fetching by fetchVm.activeCount.collectAsState()
+    val fetchReady by fetchVm.availableCount.collectAsState()
 
     Scaffold(
         modifier = Modifier
@@ -252,11 +272,36 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                             "downloads" -> "Downloads"
                             "notifications" -> "Notifications"
                             "settings" -> "Settings"
+                            "fetch" -> "Fetching"
                             else -> "Library"
                         },
                         online = online,
                         avatarLetter = (signedInEmail?.firstOrNull() ?: '●').uppercaseChar(),
                         onAvatar = { profileOpen = true },
+                        actions = {
+                            Box {
+                                V3IconAction(Icons.Rounded.HourglassTop, "Fetching") {
+                                    nav.navigate("fetch") {
+                                        popUpTo("library") { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                }
+                                when {
+                                    fetching > 0 -> Box(Modifier.align(Alignment.TopEnd)) {
+                                        CountBadge(fetching, selected = true)
+                                    }
+                                    fetchReady > 0 -> Box(
+                                        Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 10.dp, end = 10.dp)
+                                            .size(9.dp)
+                                            .clip(CircleShape)
+                                            .background(v3.success),
+                                    )
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -364,7 +409,38 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             composable("show/{showId}") { entry ->
                 val id = Uri.decode(entry.arguments?.getString("showId") ?: "")
                 val vm: ShowDetailViewModel = viewModel(factory = factory)
-                V3DetailScreen(devicesVm, vm, id, snackbar) { nav.popBackStack() }
+                V3DetailScreen(
+                    devicesVm, vm, fetchVm, id, snackbar,
+                    onBack = { nav.popBackStack() },
+                    onOpenFetch = {
+                        nav.navigate("fetch") {
+                            popUpTo("library") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
+            composable("fetch") {
+                V3FetchScreen(
+                    vm = fetchVm,
+                    snackbar = snackbar,
+                    onOpenShow = { showId -> nav.navigate("show/${Uri.encode(showId)}") },
+                    onOpenDownloads = {
+                        nav.navigate("downloads") {
+                            popUpTo("library") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onBrowseLibrary = {
+                        nav.navigate("library") {
+                            popUpTo("library") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
             }
             composable("shared/{type}/{tmdbId}") { entry ->
                 val type = entry.arguments?.getString("type") ?: "movie"
