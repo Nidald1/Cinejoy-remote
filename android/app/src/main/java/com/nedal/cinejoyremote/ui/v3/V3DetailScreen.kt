@@ -914,7 +914,14 @@ private fun V3SourcePickerSheet(
 
     LaunchedEffect(source, episode.key) { vm.loadSource(episode.key, source) }
 
-    V3Sheet(title = "Choose a source", onDismiss = onDismiss) {
+    // Lock dismissal while a lookup is genuinely in flight: the Cinejoy
+    // capture can run up to 120s and one stray backdrop tap used to throw it
+    // away and restart the whole wait. Idle must stay dismissable —
+    // queueDownload resets to Idle after Start download (spinner shows again
+    // but nothing is being fetched), and locking then would feel stuck. Back
+    // press still closes the sheet as a deliberate escape hatch.
+    val resolving = state is SourceInfoState.Loading
+    V3Sheet(title = "Choose a source", onDismiss = onDismiss, dismissable = !resolving) {
         Text(
             episode.name.ifBlank { "Episode ${episode.episode}" },
             style = V3Type.body,

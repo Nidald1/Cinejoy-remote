@@ -20,9 +20,12 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,18 +79,37 @@ private val V3RadiusChip = 14.dp
 /**
  * Design-system bottom sheet: title + rows (optional checkmark for the
  * selected one, danger tint for destructive). Backdrop and handle per spec.
+ *
+ * [dismissable] = false vetoes gesture dismissal (backdrop tap, drag-down)
+ * while the sheet's job is still running: the sheet snaps back instead of
+ * closing, so a stray touch can't throw away an in-flight wait (e.g. the
+ * source picker's up-to-120s Cinejoy capture) and force a reload. Back press
+ * still closes it — the system back path ignores confirmValueChange — which
+ * keeps a deliberate escape hatch.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun V3Sheet(
     title: String,
     onDismiss: () -> Unit,
+    dismissable: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val c = v3
+    // Hoisted so the lambda instance never changes: rememberModalBottomSheetState
+    // keys its saveable state on it, and a fresh instance per recomposition would
+    // re-init the sheet as Hidden mid-flight (re-animating on Loading -> Ready).
+    // The lambda reads the live flag through the State, not a captured Boolean.
+    val dismissableNow = rememberUpdatedState(dismissable)
+    val confirmValueChange = remember<(SheetValue) -> Boolean> {
+        { dismissableNow.value || it != SheetValue.Hidden }
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = confirmValueChange,
+        ),
         containerColor = c.sheet,
         dragHandle = {
             Box(
