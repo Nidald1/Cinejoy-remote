@@ -559,6 +559,27 @@ class RequestsViewModel(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
 
+    // When the PC *notices* a request is the bottleneck: it only mirrors a
+    // cj_events row on its Seerr scan pass, while the phone's own event poll
+    // runs every 1.5s. Entering the Notifications screen therefore fires the
+    // same `seerr-scan` command the pull-to-refresh uses (silently, no
+    // spinner) so a fresh request surfaces within seconds instead of waiting
+    // for the PC's background cadence. Throttled so tab-switching can't spam
+    // the PC with scans.
+    private var lastAutoScanAt = 0L
+
+    fun autoScan() {
+        val now = System.currentTimeMillis()
+        if (now - lastAutoScanAt < AUTO_SCAN_THROTTLE_MS) return
+        lastAutoScanAt = now
+        val d = devicesVm.selectedDeviceId.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                mirror.sendCommandForResult(d, "seerr-scan", emptyMap(), timeoutMs = 30_000)
+            }
+        }
+    }
+
     fun refresh() = viewModelScope.launch {
         val d = devicesVm.selectedDeviceId.value
         if (d == null) {
@@ -707,5 +728,9 @@ class RequestsViewModel(
             seasons = if (seasons.isEmpty()) null else seasons.joinToString(", ") { "S$it" },
             poster = str("poster")?.takeIf { it.isNotBlank() },
         )
+    }
+
+    companion object {
+        private const val AUTO_SCAN_THROTTLE_MS = 45_000L
     }
 }

@@ -72,6 +72,7 @@ import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.presentation.DevicesViewModel
 import com.nedal.cinejoyremote.presentation.LibraryViewModel
 import com.nedal.cinejoyremote.share.TmdbFetcher
+import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
 import com.nedal.cinejoyremote.ui.theme.pressScale
 import com.nedal.cinejoyremote.ui.v3.components.EmptyState
@@ -558,6 +559,43 @@ private fun V3PosterRow(
 
 // ---------------------------------------------------------------- poster tile
 
+// cj_library rows can carry poster=NULL (mirrored before the PC scraped art —
+// The Sopranos' 86-episode row is exactly that) or a picsum.photos seed URL
+// (a placeholder image, not the show). Both render as a blank or foreign tile,
+// so resolve real art phone-side: straight from the row's TMDb id when it has
+// one, otherwise by a title+year search. "" in the cache means "we looked and
+// there is nothing" so a bad row costs two TMDb calls once, not per scroll.
+private val posterArtCache =
+    java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
+
+private fun isRealPoster(url: String?): Boolean =
+    !url.isNullOrBlank() && url != "null" && "picsum.photos" !in url
+
+private suspend fun resolvePosterArt(show: LibraryShow): String? {
+    show.tmdb?.let { tmdb ->
+        TmdbFetcher.fetch(TmdbRef(show.type, tmdb)).getOrNull()?.posterUrl?.let { return it }
+    }
+    val ref = TmdbFetcher.searchRef(TmdbHint(show.type, show.title, show.year)) ?: return null
+    return TmdbFetcher.fetch(ref).getOrNull()?.posterUrl
+}
+
+@Composable
+private fun rememberPosterArt(show: LibraryShow): String? {
+    var art by remember(show.showId) {
+        mutableStateOf(
+            show.poster.takeIf { isRealPoster(it) }
+                ?: posterArtCache[show.showId]?.ifBlank { null },
+        )
+    }
+    LaunchedEffect(show.showId) {
+        if (art != null || posterArtCache.containsKey(show.showId)) return@LaunchedEffect
+        val resolved = runCatching { resolvePosterArt(show) }.getOrNull()
+        posterArtCache[show.showId] = resolved ?: ""
+        art = resolved
+    }
+    return art
+}
+
 @Composable
 private fun V3PosterTile(
     show: LibraryShow,
@@ -582,7 +620,7 @@ private fun V3PosterTile(
                 .clip(RoundedCornerShape(V3Radius.poster))
                 .background(c.raised),
         ) {
-            val poster = show.poster
+            val poster = rememberPosterArt(show)
             if (poster != null) {
                 AsyncImage(
                     model = poster,

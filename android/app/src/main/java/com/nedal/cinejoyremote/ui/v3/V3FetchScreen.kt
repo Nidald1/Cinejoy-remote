@@ -47,7 +47,9 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.presentation.FetchJob
 import com.nedal.cinejoyremote.presentation.FetchQueueViewModel
+import com.nedal.cinejoyremote.presentation.SpeedTest
 import com.nedal.cinejoyremote.ui.v3.components.EmptyState
+import com.nedal.cinejoyremote.ui.v3.components.SpeedChip
 import com.nedal.cinejoyremote.ui.v3.components.V3Divider
 import com.nedal.cinejoyremote.ui.v3.components.V3SourcePane
 
@@ -84,6 +86,7 @@ fun V3FetchScreen(
     val busyKey by vm.busyKey.collectAsState()
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
+    val speed by vm.speed.collectAsState()
     // Which (job, source) pane is expanded — one at a time keeps a long queue
     // readable. rememberSaveable so it survives rotation.
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
@@ -158,6 +161,9 @@ fun V3FetchScreen(
                 onOpenShow = { onOpenShow(job.showId) },
                 onRemove = { vm.remove(job.key) },
                 onGoDownloads = onOpenDownloads,
+                speed = speed,
+                onSpeed = { id, url -> vm.speedTest(id, url) },
+                onSpeedSource = { src -> vm.speedTestSource(job.key, src) },
             )
         }
     }
@@ -174,6 +180,9 @@ private fun FetchJobCard(
     onOpenShow: () -> Unit,
     onRemove: () -> Unit,
     onGoDownloads: () -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
+    onSpeedSource: (source: String) -> Unit,
 ) {
     val c = v3
     Column(
@@ -240,6 +249,9 @@ private fun FetchJobCard(
                 hasData = slot?.hasData == true,
                 error = slot?.error,
                 expanded = expandedSource == source,
+                speed = speed,
+                id = "${job.key}|$source",
+                onSpeedTest = { onSpeedSource(source) },
                 onToggle = { onToggle(source) },
                 onRefresh = { onRefresh(source) },
             )
@@ -251,6 +263,8 @@ private fun FetchJobCard(
                     starting = starting,
                     onQueue = onQueue,
                     onRefresh = { onRefresh(source) },
+                    speed = speed,
+                    onSpeed = onSpeed,
                 )
             }
         }
@@ -273,10 +287,25 @@ private fun SourceRow(
     hasData: Boolean,
     error: String?,
     expanded: Boolean,
+    speed: Map<String, SpeedTest>,
+    id: String,
+    onSpeedTest: () -> Unit,
     onToggle: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     val c = v3
+    // Aggregate fan-out results: a source-level entry if one exists (cinejoy),
+    // otherwise combine the per-server probes under "$id|…" — running while
+    // any child runs, failed if they all failed, else the fastest child read.
+    val test = speed[id]
+        ?: speed.filterKeys { it.startsWith("$id|") }.values.let { kids ->
+            when {
+                kids.isEmpty() -> null
+                kids.any { it.running } -> SpeedTest(running = true)
+                kids.all { it.failed } -> SpeedTest(failed = true)
+                else -> kids.filter { it.bytesPerSec != null }.maxByOrNull { it.bytesPerSec!! }
+            }
+        }
     Row(
         Modifier
             .fillMaxWidth()
@@ -319,6 +348,8 @@ private fun SourceRow(
                 else -> c.textTertiary
             },
         )
+        Spacer(Modifier.width(V3Space.sm))
+        SpeedChip(test = test, onClick = onSpeedTest)
         if (error != null || hasData) {
             androidx.compose.material3.IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Rounded.Refresh, "Refresh ${SOURCE_LABELS[source]}", tint = c.textTertiary, modifier = Modifier.size(16.dp))

@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.nedal.cinejoyremote.presentation.SpeedTest
 import com.nedal.cinejoyremote.ui.v3.V3Radius
 import com.nedal.cinejoyremote.ui.v3.V3Space
 import com.nedal.cinejoyremote.ui.v3.V3Type
@@ -87,6 +89,8 @@ fun V3SourcePane(
     starting: Boolean,
     onQueue: (Map<String, String>) -> Unit,
     onRefresh: () -> Unit,
+    speed: Map<String, SpeedTest> = emptyMap(),
+    onSpeed: (id: String, url: String) -> Unit = { _, _ -> },
 ) {
     val c = v3
     if (data.bool("ok") == false) {
@@ -98,10 +102,63 @@ fun V3SourcePane(
         return
     }
     when (source) {
-        "movy" -> V3MovyPane(data, stateKey, starting, onQueue)
-        "akwam" -> V3AkwamPane(data, stateKey, starting, onQueue)
-        else -> V3CinejoyPane(data, stateKey, starting, onQueue, onRefresh)
+        "movy" -> V3MovyPane(data, stateKey, starting, onQueue, speed, onSpeed)
+        "akwam" -> V3AkwamPane(data, stateKey, starting, onQueue, speed, onSpeed)
+        else -> V3CinejoyPane(data, stateKey, starting, onQueue, onRefresh, speed, onSpeed)
     }
+}
+
+/**
+ * ⚡ chip: starts a phone-side throughput probe for the URL it's attached to
+ * and shows the live result (MB/s, or ms when the transfer was too small for
+ * a throughput figure to mean anything). Shared by the fetch screen's source
+ * rows and the per-server rows inside the panes.
+ */
+@Composable
+fun SpeedChip(test: SpeedTest?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = v3
+    val running = test?.running == true
+    Row(
+        modifier
+            .clip(RoundedCornerShape(V3Radius.pill))
+            .background(if (running) c.accent.copy(alpha = 0.14f) else c.surface)
+            .clickable(enabled = !running, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Speed,
+            contentDescription = "Speed test",
+            tint = when {
+                running -> c.accent
+                test?.failed == true -> c.error
+                else -> c.textSecondary
+            },
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            speedLabel(test),
+            style = V3Type.caption,
+            color = when {
+                running -> c.accent
+                test?.failed == true -> c.error
+                test?.bytesPerSec != null && !test.pingOnly -> c.success
+                else -> c.textSecondary
+            },
+        )
+    }
+}
+
+internal fun speedLabel(test: SpeedTest?): String = when {
+    test == null -> "test"
+    test.bytesPerSec == null && test.running -> "testing…"
+    test.failed -> "failed"
+    test.pingOnly -> "${test.ttfbMs ?: 0} ms"
+    test.bytesPerSec == null -> "test"
+    test.bytesPerSec >= 1_000_000 -> "%.1f MB/s".format(test.bytesPerSec / 1_000_000.0)
+    test.bytesPerSec >= 1_000 -> "${test.bytesPerSec / 1_000} KB/s"
+    else -> "${test.bytesPerSec} B/s"
 }
 
 @Composable
@@ -134,6 +191,8 @@ private fun V3CinejoyPane(
     starting: Boolean,
     onQueue: (Map<String, String>) -> Unit,
     onRefresh: () -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
 ) {
     val c = v3
     val streamError = data.str("streamError")
@@ -157,11 +216,22 @@ private fun V3CinejoyPane(
     val options = listOf(-1) + variants.mapIndexed { i, _ -> i }
 
     Column(verticalArrangement = Arrangement.spacedBy(V3Space.md)) {
-        Text(
-            "Server: $server · ${if (variants.isEmpty()) "single stream" else "${variants.size} quality variant(s)"}",
-            style = V3Type.caption,
-            color = c.textTertiary,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Server: $server · ${if (variants.isEmpty()) "single stream" else "${variants.size} quality variant(s)"}",
+                style = V3Type.caption,
+                color = c.textTertiary,
+                modifier = Modifier.weight(1f),
+            )
+            data.str("url")?.takeIf { it.startsWith("http") }?.let { url ->
+                val id = "$stateKey|cinejoy"
+                SpeedChip(test = speed[id], onClick = { onSpeed(id, url) })
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(V3Space.sm), modifier = Modifier.fillMaxWidth()) {
             options.take(6).forEach { i ->
                 val label = if (i < 0) "Auto" else (variants[i].int("height")?.let { "${it}p" } ?: "stream")
@@ -194,6 +264,8 @@ private fun V3MovyPane(
     stateKey: String,
     starting: Boolean,
     onQueue: (Map<String, String>) -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
 ) {
     val c = v3
     val servers = data.arr("servers")
@@ -260,6 +332,19 @@ private fun V3MovyPane(
                             }
                         }
                     }
+                    if (ok) {
+                        val url = srv.arr("sources").firstNotNullOfOrNull { s ->
+                            s.str("url")?.takeIf { u -> u.startsWith("http") }
+                        }
+                        if (url != null) {
+                            val id = "$stateKey|movy|$key"
+                            SpeedChip(
+                                test = speed[id],
+                                onClick = { onSpeed(id, url) },
+                                modifier = Modifier.padding(start = V3Space.sm),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -302,6 +387,8 @@ private fun V3AkwamPane(
     stateKey: String,
     starting: Boolean,
     onQueue: (Map<String, String>) -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
 ) {
     val c = v3
     val entries = data.arr("entries")
@@ -334,6 +421,16 @@ private fun V3AkwamPane(
                         ).joinToString(" · ").ifBlank { "quality option" },
                         style = V3Type.caption,
                         color = c.textTertiary,
+                    )
+                }
+                val url = e.str("url")?.takeIf { u -> u.startsWith("http") }
+                    ?: e.str("downloadPage")?.takeIf { u -> u.startsWith("http") }
+                if (url != null) {
+                    val id = "$stateKey|akwam|$i"
+                    SpeedChip(
+                        test = speed[id],
+                        onClick = { onSpeed(id, url) },
+                        modifier = Modifier.padding(start = V3Space.sm),
                     )
                 }
             }

@@ -86,6 +86,8 @@ fun V3SettingsScreen(
             .padding(horizontal = V3Space.gutter),
         verticalArrangement = Arrangement.spacedBy(V3Space.listGap),
     ) {
+        // --- Display -------------------------------------------------------
+        V3SectionLabel("Display")
         // Appearance: dark / light / OLED — drives both v3 palette and the
         // legacy theme constant (status bar icons follow it).
         V3SettingsCard("Appearance") {
@@ -118,6 +120,8 @@ fun V3SettingsScreen(
             }
         }
 
+        // --- PC & connection ------------------------------------------------
+        V3SectionLabel("PC & connection")
         val devices by devicesVm.devices.collectAsState()
         val selected by devicesVm.selectedDeviceId.collectAsState()
         val check by connection.state.collectAsState()
@@ -172,18 +176,6 @@ fun V3SettingsScreen(
             }
         }
 
-        V3SettingsCard("Account") {
-            Text(
-                (authState as? AuthState.SignedIn)?.email?.let { "Signed in as $it" } ?: "…",
-                style = V3Type.body,
-                color = c.textSecondary,
-            )
-            Spacer(Modifier.height(V3Space.sm))
-            OutlinedButton(onClick = authVm::signOut, shape = RoundedCornerShape(V3Radius.sm)) {
-                Text("Sign out", style = V3Type.chip, color = c.error)
-            }
-        }
-
         V3SettingsCard("PC tools") {
             Text(
                 "Maintenance actions run on the connected PC through the same code paths the desktop app uses.",
@@ -221,6 +213,20 @@ fun V3SettingsScreen(
             }
             if (busy != null) {
                 LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = c.accent, trackColor = c.raised)
+            }
+        }
+
+        // --- App -----------------------------------------------------------
+        V3SectionLabel("App")
+        V3SettingsCard("Account") {
+            Text(
+                (authState as? AuthState.SignedIn)?.email?.let { "Signed in as $it" } ?: "…",
+                style = V3Type.body,
+                color = c.textSecondary,
+            )
+            Spacer(Modifier.height(V3Space.sm))
+            OutlinedButton(onClick = authVm::signOut, shape = RoundedCornerShape(V3Radius.sm)) {
+                Text("Sign out", style = V3Type.chip, color = c.error)
             }
         }
 
@@ -297,6 +303,17 @@ fun V3SettingsScreen(
             confirmButton = { TextButton(onClick = { pcTools.closeLog() }) { Text("Close", color = c.accent) } },
         )
     }
+}
+
+/** Group heading that sits above a cluster of [V3SettingsCard]s. */
+@Composable
+private fun V3SectionLabel(title: String) {
+    Text(
+        title.uppercase(),
+        style = V3Type.caption12,
+        color = v3.textTertiary,
+        modifier = Modifier.padding(top = V3Space.sm),
+    )
 }
 
 @Composable

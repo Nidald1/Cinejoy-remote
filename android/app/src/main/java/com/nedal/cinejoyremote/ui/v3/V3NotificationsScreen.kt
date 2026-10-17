@@ -66,6 +66,10 @@ fun V3NotificationsScreen(
 
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
+    // The PC only mirrors a Seerr request when its scan runs — ask for a scan
+    // as soon as this screen appears (throttled inside the VM) so a just-made
+    // request shows up now, not on the PC's next background pass.
+    LaunchedEffect(Unit) { vm.autoScan() }
     LaunchedEffect(acceptedShow) {
         acceptedShow?.let { onAcceptedShow(it); vm.clearAcceptedShow() }
     }

@@ -2,9 +2,12 @@ package com.nedal.cinejoyremote.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nedal.cinejoyremote.core.SpeedSample
+import com.nedal.cinejoyremote.core.SpeedTester
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.domain.MirrorRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +18,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Fetch state for ONE (episode, source) pair.
@@ -33,6 +42,19 @@ data class SourceSlot(
 ) {
     val hasData get() = data != null
 }
+
+/**
+ * Result of one speed probe, per source or per server (see
+ * [FetchQueueViewModel.speed] for the key scheme).
+ */
+data class SpeedTest(
+    val running: Boolean = false,
+    val bytesPerSec: Long? = null,
+    val ttfbMs: Long? = null,
+    val pingOnly: Boolean = false,
+    val failed: Boolean = false,
+    val at: Long = 0L,
+)
 
 /** One queued episode/movie plus the per-source slots for the 3 sources. */
 data class FetchJob(
@@ -198,6 +220,79 @@ class FetchQueueViewModel(
     }
 
     fun openShow(key: String): String? = _jobs.value.find { it.key == key }?.showId
+
+    // ---------------------------------------------------------------- speed tests
+
+    /**
+     * Live speed results, keyed: "$jobKey|$source" for a whole source,
+     * "$jobKey|$source|$server" for one server/entry under it. Tests hit only
+     * URLs the fetch response already carries — the fetch process itself is
+     * not involved, this is a side-by-side read of the same links.
+     */
+    private val _speed = MutableStateFlow<Map<String, SpeedTest>>(emptyMap())
+    val speed: StateFlow<Map<String, SpeedTest>> = _speed
+
+    private val speedLane = Semaphore(4) // at most 4 probes in flight
+    private val speedInFlight = mutableSetOf<String>()
+
+    /** Test one URL under [id]; a second tap while running joins the probe. */
+    fun speedTest(id: String, url: String) {
+        synchronized(speedInFlight) { if (!speedInFlight.add(id)) return }
+        _speed.update { it + (id to SpeedTest(running = true)) }
+        viewModelScope.launch {
+            try {
+                speedLane.withPermit {
+                    val sample = withContext(Dispatchers.IO) { SpeedTester.measure(url) }.getOrElse {
+                        _speed.update { m -> m + (id to SpeedTest(failed = true, at = System.currentTimeMillis())) }
+                        return@withPermit
+                    }
+                    _speed.update { m ->
+                        m + (id to SpeedTest(
+                            bytesPerSec = sample.bytesPerSec,
+                            ttfbMs = sample.ttfbMs,
+                            pingOnly = sample.pingOnly,
+                            at = System.currentTimeMillis(),
+                        ))
+                    }
+                }
+            } finally {
+                synchronized(speedInFlight) { speedInFlight.remove(id) }
+            }
+        }
+    }
+
+    /**
+     * Fan out across every server/entry one source returned: movy's servers
+     * each get their own probe, akwam's quality entries too, and cinejoy
+     * (single capture) is just its master stream. Fired by the source row's
+     * ⚡ button; per-server ⚡ buttons re-probe a single URL.
+     */
+    fun speedTestSource(key: String, source: String) {
+        val data = _jobs.value.findJob(key)?.sources?.get(source)?.data ?: return
+        speedTargets(key, source, data).forEach { (id, url) -> speedTest(id, url) }
+    }
+
+    private fun speedTargets(key: String, source: String, data: JsonObject): List<Pair<String, String>> {
+        fun http(o: JsonObject, k: String): String? =
+            (o[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.startsWith("http") }
+        return when (source) {
+            "cinejoy" -> listOfNotNull(http(data, "url")?.let { "$key|$source" to it })
+            "movy" -> ((data["servers"] as? JsonArray) ?: return emptyList()).mapNotNull { el ->
+                val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapNotNull null
+                val srv = (o["key"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+                val url = ((o["sources"] as? JsonArray) ?: return@mapNotNull null)
+                    .firstNotNullOfOrNull { s -> (s as? JsonObject)?.let { http(it, "url") } }
+                    ?: return@mapNotNull null
+                "$key|$source|$srv" to url
+            }
+            "akwam" -> ((data["entries"] as? JsonArray) ?: return emptyList()).mapIndexedNotNull { i, el ->
+                val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapIndexedNotNull null
+                val url = http(o, "url") ?: http(o, "downloadPage") ?: return@mapIndexedNotNull null
+                "$key|$source|$i" to url
+            }
+            else -> emptyList()
+        }
+    }
 
     fun clearError() { _error.value = null }
     fun clearNotice() { _notice.value = null }

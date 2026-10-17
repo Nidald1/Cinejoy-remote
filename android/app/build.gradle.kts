@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 503000
-        versionName = "5.3.0"
+        versionName = "5.4.0"
     }
 
     // CI signed builds: env vars set by .github/workflows/release.yml.
