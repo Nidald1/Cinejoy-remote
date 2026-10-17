@@ -13,7 +13,7 @@ android {
         applicationId = "com.nedal.cinejoyremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 503000
+        versionCode = 504000
         versionName = "5.4.0"
     }
 
