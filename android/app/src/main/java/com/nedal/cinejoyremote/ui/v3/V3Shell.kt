@@ -10,8 +10,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -266,7 +271,19 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
             .nestedScroll(bottomConn),
         topBar = {
             if (!fullscreen) {
-                BarVisibility(visible = topBarVisible, fromBottom = false) {
+                // Solid chrome that OWNS the status bar: the app color fills
+                // the inset area so the clock/icons sit on an app-colored
+                // band (part of the UI, Facebook-style) instead of floating
+                // over the title. The band stays even when the slim row
+                // collapses on scroll, so content slides under an opaque
+                // strip instead of colliding with the system icons.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(v3.background)
+                        .windowInsetsPadding(WindowInsets.statusBars),
+                ) {
+                    BarVisibility(visible = topBarVisible, fromBottom = false) {
                     V3TopBar(
                         title = when (route) {
                             "downloads" -> "Downloads"
@@ -303,6 +320,7 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                             }
                         },
                     )
+                    }
                 }
             }
         },
