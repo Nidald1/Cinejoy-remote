@@ -9,6 +9,7 @@ import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.domain.MirrorRepository
 import com.nedal.cinejoyremote.core.WolSender
 import com.nedal.cinejoyremote.domain.RemoteEvent
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -508,6 +509,13 @@ class ConnectionViewModel(
     // Magic packet to the PC's last mirrored broadcast address. Nothing
     // acknowledges it (a sleeping PC cannot answer), so the notice says the
     // packet was sent — not that the PC came up.
+    //
+    // Two paths, because the packet is a LAN broadcast and the phone often is
+    // not on that LAN:
+    //   1. requestWake() queues a row any relay device on the LAN can pick up
+    //      (this is the path that works from mobile data behind CGNAT)
+    //   2. a direct send, which is instant when this phone is on the same LAN
+    // Both are harmless if duplicated — a magic packet is idempotent.
     fun wakePc() = viewModelScope.launch {
         val deviceId = devicesVm.selectedDeviceId.value
         if (deviceId == null) {
@@ -522,14 +530,62 @@ class ConnectionViewModel(
             return@launch
         }
         val targets = listOfNotNull(device.bcast, "255.255.255.255")
+        // Queue for the relay first: if this phone is on mobile data the
+        // direct send below goes nowhere, and the relay is the only path.
+        val queued = mirror.requestWake(deviceId, requestedBy = "CineJoy Remote")
         val sent = runCatching { WolSender.send(mac, targets) }
-        _notice.value = sent.exceptionOrNull()?.let { "Wake packet failed: ${it.message}" }
-            ?: "Wake packet sent to $mac via ${targets.joinToString()}"
+        val msg = when {
+            queued.isSuccess && sent.isSuccess ->
+                "Wake packet sent to $mac · relay request queued (covers mobile data)"
+            queued.isSuccess ->
+                "Relay request queued — waiting for a device on the home network to send it"
+            sent.isSuccess ->
+                "Wake packet sent to $mac via ${targets.joinToString()} (relay queue failed: " +
+                    "${queued.exceptionOrNull()?.message})"
+            else -> "Wake packet failed: ${sent.exceptionOrNull()?.message}"
+        }
+        _notice.value = msg
+        if (queued.isSuccess || sent.isSuccess) awaitWake(deviceId, device.lastSeen, msg)
+    }
+
+    // A sleeping PC cannot acknowledge the packet — that is the whole problem
+    // with Wake-on-LAN, and why "sent" is not proof of anything. The one
+    // honest signal that a wake worked is that the PC stops being asleep: its
+    // app resumes heartbeating and cj_devices.last_seen moves forward. So watch
+    // for that instead of claiming success on send.
+    private suspend fun awaitWake(deviceId: String, lastSeenBefore: String?, msg: String) {
+        // Already inside the online window means it never went down, so there
+        // is nothing to wait for — say so instead of timing out on it.
+        // Null = no parseable heartbeat, which still warrants watching.
+        val age = ageSeconds(lastSeenBefore)
+        if (age != null && age < ONLINE_WINDOW_S) {
+            _notice.value = "$msg · PC was already awake"
+            return
+        }
+        _notice.value = "$msg · waiting for the PC to report back…"
+        repeat(WAKE_CONFIRM_ATTEMPTS) {
+            delay(WAKE_CONFIRM_POLL_MS)
+            val now = mirror.fetchDevice(deviceId).getOrNull()?.lastSeen
+            // Any change means the PC wrote a fresh heartbeat, i.e. it is up.
+            if (!now.isNullOrBlank() && now != lastSeenBefore) {
+                _notice.value = "$msg · PC is awake — it just reported in"
+                return
+            }
+        }
+        _notice.value = "$msg · no response yet. It may still be booting, or no " +
+            "relay is online at home."
     }
 
     companion object {
         // Mirrors the header chip's window in ui/App.kt (pcOnline).
         const val ONLINE_WINDOW_S = 150L
+
+        // How long to watch for the PC to report back after a wake, and how
+        // often to look. Deliberately generous: a cold boot plus the PC app
+        // starting can take well over a minute, and a timeout that fires early
+        // reads as failure when the wake was merely still in progress.
+        private const val WAKE_CONFIRM_ATTEMPTS = 30
+        private const val WAKE_CONFIRM_POLL_MS = 4_000L
     }
 }
 

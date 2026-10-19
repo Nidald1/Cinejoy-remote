@@ -17,8 +17,12 @@ object WolSender {
     fun packet(mac: String): ByteArray {
         val clean = mac.lowercase().replace(Regex("[^0-9a-f]"), "")
         require(clean.length == 12) { "bad MAC address: $mac" }
-        val bytes = ByteArray(12)
-        for (i in 0 until 12) {
+        // A MAC is 12 hex chars = 6 bytes. The loop bound must be the byte
+        // count, not the hex-char count: iterating to 12 read past the end of
+        // the string (substring(12, 14) on length 12) and threw for every
+        // valid address, so no packet was ever built.
+        val bytes = ByteArray(6)
+        for (i in 0 until 6) {
             bytes[i] = clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
         val payload = ByteArray(6 + 16 * 6)

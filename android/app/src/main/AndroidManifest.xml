@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Wake relay: a device left at home polls Supabase and broadcasts the
+         magic packet. All three keep it alive across doze and reboots. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".CinejoyApplication"
@@ -38,5 +44,24 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!-- Wake relay: only started when the user opts this device in, and
+             restarted after a reboot so it stays a relay without the app
+             being opened. -->
+        <service
+            android:name=".relay.WakeRelayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="home_automation_relay" />
+        </service>
+        <receiver
+            android:name=".relay.RelayBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

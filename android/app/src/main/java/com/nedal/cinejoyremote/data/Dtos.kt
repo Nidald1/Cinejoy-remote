@@ -99,6 +99,21 @@ data class CommandInsertDto(
 )
 
 @Serializable
+data class WakeRequestDto(
+    val id: Long = 0,
+    @SerialName("device_id") val deviceId: String = "",
+    @SerialName("requested_by") val requestedBy: String = "",
+    val status: String = "pending",
+)
+
+@Serializable
+data class WakeRequestInsertDto(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("requested_by") val requestedBy: String = "",
+)
+
+@Serializable
 data class CommandRowDto(
     val id: Long = 0,
     val status: String = "pending",

@@ -17,6 +17,10 @@ interface MirrorRepository {
     // One-shot read of one PC's mirror row: the connection check and
     // Wake-on-LAN need the last known state now, not on the next poll tick.
     suspend fun fetchDevice(deviceId: String): Result<Device?>
+    // Remote Wake-on-LAN: queue a request for whatever relay device is left
+    // on the LAN. Fire-and-forget — nothing here can confirm the PC woke, so
+    // callers say the request was sent, never that the PC came up.
+    suspend fun requestWake(deviceId: String, requestedBy: String): Result<Unit>
     fun observeDownloads(deviceId: String): Flow<List<DownloadTask>>
     fun observeLibrary(deviceId: String): Flow<List<LibraryShow>>
     fun observeEvents(deviceId: String): Flow<List<RemoteEvent>>

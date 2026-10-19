@@ -29,6 +29,12 @@ class MainActivity : ComponentActivity() {
         ThemeController.load(applicationContext)
         DetailStyleController.load(applicationContext)
         LibraryStyleController.load(applicationContext)
+        // A relay-enabled device resumes relaying on its own after an app
+        // update or process death — the user should never have to reopen the
+        // app to keep their home device able to wake the PC.
+        if (com.nedal.cinejoyremote.relay.RelayPrefs.enabled(applicationContext)) {
+            com.nedal.cinejoyremote.relay.WakeRelayService.start(applicationContext)
+        }
         // A rotation re-delivers the same intent; only a fresh launch is a share.
         if (savedInstanceState == null) handleShare(intent)
         setContent {

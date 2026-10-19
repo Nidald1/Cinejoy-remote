@@ -216,6 +216,41 @@ fun V3SettingsScreen(
             }
         }
 
+        // --- Wake relay ----------------------------------------------------
+        // The one piece that makes wake work from outside the home network:
+        // magic packets are a LAN broadcast, so some device has to be on the
+        // LAN to send them. This card turns this device into that sender.
+        V3SectionLabel("Wake relay")
+        V3SettingsCard("Wake relay") {
+            val relayOn by com.nedal.cinejoyremote.relay.WakeRelayService.running.collectAsState()
+            val relayEnabled = remember(relayOn) {
+                com.nedal.cinejoyremote.relay.RelayPrefs.enabled(context)
+            }
+            Text(
+                "Keeps this device able to wake your PC from anywhere. Enable it on a phone that " +
+                    "stays home and is plugged in — not the one you carry out with you.",
+                style = V3Type.caption,
+                color = c.textTertiary,
+            )
+            Spacer(Modifier.height(V3Space.sm))
+            Button(
+                onClick = {
+                    val next = !relayEnabled
+                    com.nedal.cinejoyremote.relay.RelayPrefs.setEnabled(context, next)
+                    if (next) com.nedal.cinejoyremote.relay.WakeRelayService.start(context)
+                    else com.nedal.cinejoyremote.relay.WakeRelayService.stop(context)
+                },
+                enabled = relayEnabled || check !is ConnectionViewModel.CheckState.Running,
+                shape = RoundedCornerShape(V3Radius.sm),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (relayEnabled) "Relay on — tap to stop" else "Turn on relay", style = V3Type.chip)
+            }
+            if (relayOn) {
+                Text("This device is listening for wake requests.", style = V3Type.caption, color = c.success)
+            }
+        }
+
         // --- App -----------------------------------------------------------
         V3SectionLabel("App")
         V3SettingsCard("Account") {

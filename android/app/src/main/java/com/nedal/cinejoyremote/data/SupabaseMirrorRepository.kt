@@ -65,6 +65,20 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
         rows.firstOrNull()?.toDomain()
     }
 
+    // Remote Wake-on-LAN. The row is a request, not a command: nothing on the
+    // PC can act on it (the PC is the thing asleep). A relay device picks it
+    // up and broadcasts the magic packet. requested_by is informational only
+    // — RLS already scopes the row to this user.
+    override suspend fun requestWake(deviceId: String, requestedBy: String): Result<Unit> = runCatching {
+        client.from("cj_wake_requests").insert(
+            WakeRequestInsertDto(
+                userId = userId(),
+                deviceId = deviceId,
+                requestedBy = requestedBy.take(60),
+            )
+        )
+    }
+
     override fun observeDownloads(deviceId: String): Flow<List<DownloadTask>> = poll {
         client.from("cj_download_state").select {
             filter {
