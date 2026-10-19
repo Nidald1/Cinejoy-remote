@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -16,7 +17,9 @@ import com.nedal.cinejoyremote.core.SupabaseProvider
 import com.nedal.cinejoyremote.core.WolSender
 import com.nedal.cinejoyremote.data.DeviceDto
 import com.nedal.cinejoyremote.data.WakeRequestDto
+import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.CoroutineScope
@@ -26,10 +29,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The always-on half of remote Wake-on-LAN.
@@ -48,6 +53,7 @@ class WakeRelayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val claimMutex = Mutex()
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -62,6 +68,22 @@ class WakeRelayService : Service() {
             setReferenceCounted(false)
             acquire()
         }
+        // A CPU wake lock keeps the poller ticking but says nothing about the
+        // radio. With the screen off for long stretches the Wi-Fi chip drops
+        // into power-save, the Supabase poll starts timing out, and the relay
+        // looks dead until the app is opened again — which is exactly what a
+        // device left at home does all day. A Wi-Fi lock keeps the link awake.
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val wifiMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        wifiLock = wm.createWifiLock(wifiMode, "cinejoy:relay-wifi").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
         scope.launch { pollLoop() }
     }
 
@@ -71,17 +93,34 @@ class WakeRelayService : Service() {
         scope.cancel()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
         super.onDestroy()
+    }
+
+    // The relay is most often started by a background restart, where Auth is
+    // still restoring the saved session: currentUserOrNull() is null at that
+    // moment even though the device IS signed in. Reading it directly is what
+    // made a signed-in phone report "sign in on this device" and idle for 30
+    // seconds. Wait for the restore to settle, then decide.
+    private suspend fun currentUserId(client: SupabaseClient): String? {
+        val status = withTimeoutOrNull(SESSION_WAIT_MS) {
+            client.auth.sessionStatus.first { it !is SessionStatus.Initializing }
+        }
+        return (status as? SessionStatus.Authenticated)?.session?.user?.id
+            // Timed out still restoring, or genuinely signed out — in both
+            // cases the in-memory value is the honest answer.
+            ?: client.auth.currentUserOrNull()?.id
     }
 
     private suspend fun pollLoop() {
         val client = SupabaseProvider.client
         while (scope.isActive) {
             try {
-                val userId = client.auth.currentUserOrNull()?.id
+                val userId = currentUserId(client)
                 if (userId == null) {
                     updateNotification("Sign in on this device to relay wake requests")
-                    delay(30_000)
+                    delay(AUTH_RETRY_MS)
                     continue
                 }
                 // Requests from any of the user's PCs, newest first. A relay
@@ -190,6 +229,11 @@ class WakeRelayService : Service() {
         private const val CHANNEL_ID = "wake_relay"
         private const val NOTIFICATION_ID = 4213
         private const val POLL_MS = 5_000L
+        // How long to wait for Auth to restore a saved session, and how long to
+        // back off when there is genuinely no session. The old 30s backoff made
+        // a transient restore race look like a permanent sign-out.
+        private const val SESSION_WAIT_MS = 10_000L
+        private const val AUTH_RETRY_MS = 10_000L
 
         private val _running = MutableStateFlow(false)
         val running: StateFlow<Boolean> = _running
