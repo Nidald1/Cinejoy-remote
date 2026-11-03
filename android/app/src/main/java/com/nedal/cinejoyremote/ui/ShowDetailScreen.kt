@@ -91,6 +91,8 @@ import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.SourceInfoState
 import com.nedal.cinejoyremote.presentation.SubtitleLangState
 import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
+import com.nedal.cinejoyremote.presentation.subtitleSourceLabel
+import com.nedal.cinejoyremote.presentation.subtitleSourcesFor
 import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
 import com.nedal.cinejoyremote.ui.components.Artwork
@@ -424,7 +426,7 @@ fun ShowDetailScreen(
         SubtitleLangDialog(
             state = subLangsState,
             onDismiss = { langTarget = null; vm.clearSubtitleLanguages() },
-            onDownload = { key, langs -> langTarget = null; vm.downloadSubtitles(key, langs) },
+            onDownload = { key, langs, sources -> langTarget = null; vm.downloadSubtitles(key, langs, sources) },
         )
     }
 
@@ -445,7 +447,7 @@ fun ShowDetailScreen(
 private fun SubtitleLangDialog(
     state: SubtitleLangState,
     onDismiss: () -> Unit,
-    onDownload: (String, List<String>) -> Unit,
+    onDownload: (String, List<String>, List<String>) -> Unit,
 ) {
     when (state) {
         SubtitleLangState.Idle -> Unit
@@ -462,7 +464,9 @@ private fun SubtitleLangDialog(
             confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
         )
         is SubtitleLangState.Ready -> {
-            var selected by remember(state.key) { mutableStateOf(defaultSubtitleLangs(state.languages)) }
+            var scope by remember(state.key) { mutableStateOf("all") }
+            val rows = if (scope == "all") state.languages else state.bySource[scope].orEmpty()
+            var selected by remember(state.key, scope) { mutableStateOf(defaultSubtitleLangs(rows)) }
             AlertDialog(
                 onDismissRequest = onDismiss,
                 title = { Text("Choose subtitle languages") },
@@ -471,17 +475,31 @@ private fun SubtitleLangDialog(
                         Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        val shownTotal = rows.sumOf { it.count }
                         Text(
-                            if (state.languages.isEmpty()) {
-                                "No matching subtitles found for this episode."
+                            if (rows.isEmpty()) {
+                                "No subtitles for this episode on ${subtitleSourceLabel(scope)}."
                             } else {
-                                "${state.total} subtitle${if (state.total == 1) "" else "s"} available in " +
-                                    "${state.languages.size} language${if (state.languages.size == 1) "" else "s"}"
+                                "$shownTotal subtitle${if (shownTotal == 1) "" else "s"} available in " +
+                                    "${rows.size} language${if (rows.size == 1) "" else "s"} on ${subtitleSourceLabel(scope)}"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        state.languages.forEach { lang ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf("all", "cinejoy", "atlantic").forEach { option ->
+                                TextButton(onClick = { scope = option }) {
+                                    Text(
+                                        subtitleSourceLabel(option),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (scope == option) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (scope == option) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        rows.forEach { lang ->
                             val checked = lang.code in selected
                             Row(
                                 Modifier
@@ -509,6 +527,15 @@ private fun SubtitleLangDialog(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (lang.bySource.size > 1) {
+                                        Text(
+                                            lang.bySource.entries.joinToString(" · ") { (src, n) ->
+                                                "${if (src == "atlantic") "Atlantic" else "Cinejoy"} $n"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                     if (lang.existing > 0) {
                                         Text(
                                             "${lang.existing} downloaded",
@@ -519,9 +546,9 @@ private fun SubtitleLangDialog(
                                 }
                             }
                         }
-                        if (state.languages.isNotEmpty()) {
+                        if (rows.isNotEmpty()) {
                             Row {
-                                TextButton(onClick = { selected = state.languages.map { it.code }.toSet() }) {
+                                TextButton(onClick = { selected = rows.map { it.code }.toSet() }) {
                                     Text("All")
                                 }
                                 TextButton(onClick = { selected = emptySet() }) { Text("None") }
@@ -532,7 +559,7 @@ private fun SubtitleLangDialog(
                 confirmButton = {
                     TextButton(
                         enabled = selected.isNotEmpty(),
-                        onClick = { onDownload(state.key, selected.toList()) },
+                        onClick = { onDownload(state.key, selected.toList(), subtitleSourcesFor(scope)) },
                     ) {
                         Text(if (selected.isEmpty()) "Download" else "Download (${selected.size})")
                     }

@@ -272,10 +272,30 @@ sealed interface SubtitleLangState {
         val key: String,
         val languages: List<SubtitleLang>,
         val total: Int,
+        val bySource: Map<String, List<SubtitleLang>> = emptyMap(),
     ) : SubtitleLangState
 }
 
-data class SubtitleLang(val code: String, val name: String, val count: Int, val existing: Int)
+data class SubtitleLang(
+    val code: String,
+    val name: String,
+    val count: Int,
+    val existing: Int,
+    val bySource: Map<String, Int> = emptyMap(),
+)
+
+// The providers the PC can fetch subtitles from. "Both" is the default so one
+// press brings everything the two sites have for the episode.
+val SUBTITLE_SOURCES = listOf("cinejoy", "atlantic")
+
+fun subtitleSourcesFor(scope: String): List<String> =
+    if (scope == "all") SUBTITLE_SOURCES else listOf(scope)
+
+fun subtitleSourceLabel(scope: String): String = when (scope) {
+    "cinejoy" -> "Cinejoy"
+    "atlantic" -> "Atlantic"
+    else -> "Cinejoy + Atlantic"
+}
 
 // Same rule as the desktop picker: Arabic, else English, else the first row.
 fun defaultSubtitleLangs(langs: List<SubtitleLang>): Set<String> {
@@ -288,20 +308,30 @@ fun defaultSubtitleLangs(langs: List<SubtitleLang>): Set<String> {
     }
 }
 
-private fun parseSubtitleLanguages(obj: JsonObject?): Pair<List<SubtitleLang>, Int> {
-    if (obj == null) return emptyList<SubtitleLang>() to 0
-    val languages = (obj["languages"] as? JsonArray)?.mapNotNull { element ->
+private fun parseSubtitleLanguages(obj: JsonObject?): Triple<List<SubtitleLang>, Int, Map<String, List<SubtitleLang>>> {
+    if (obj == null) return Triple(emptyList(), 0, emptyMap())
+    fun parseRows(array: JsonArray?): List<SubtitleLang> = (array)?.mapNotNull { element ->
         val o = element as? JsonObject ?: return@mapNotNull null
         fun field(name: String) = o[name]?.jsonPrimitive?.contentOrNull
+        val perSource = (o["bySource"] as? JsonObject)?.entries?.mapNotNull { (source, value) ->
+            val n = value.jsonPrimitive.contentOrNull?.toIntOrNull() ?: return@mapNotNull null
+            source to n
+        }?.toMap() ?: emptyMap()
         SubtitleLang(
             code = field("code") ?: return@mapNotNull null,
             name = field("name") ?: "",
             count = field("count")?.toIntOrNull() ?: 0,
             existing = field("existing")?.toIntOrNull() ?: 0,
+            bySource = perSource,
         )
     } ?: emptyList()
+    val languages = parseRows(obj["languages"] as? JsonArray)
     val total = obj["total"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: languages.sumOf { it.count }
-    return languages to total
+    val bySource = (obj["bySource"] as? JsonObject)?.entries?.mapNotNull { (source, value) ->
+        val o = value as? JsonObject ?: return@mapNotNull null
+        source to parseRows(o["languages"] as? JsonArray)
+    }?.toMap() ?: emptyMap()
+    return Triple(languages, total, bySource)
 }
 
 // What the source picker shows while the PC resolves servers/qualities.
@@ -396,20 +426,31 @@ class ShowDetailViewModel(
             SubtitleLangState.Failed(err.message ?: "could not reach the PC")
         } else {
             val parsed = parseSubtitleLanguages(r.getOrNull())
-            SubtitleLangState.Ready(key, parsed.first, parsed.second)
+            SubtitleLangState.Ready(key, parsed.first, parsed.second, parsed.third)
         }
     }
 
-    // Only the languages ticked in the picker are downloaded.
-    fun downloadSubtitles(key: String, langs: List<String>) = viewModelScope.launch {
+    // Only the languages ticked in the picker are downloaded, and only from the
+    // subtitle source(s) chosen there (Cinejoy, Atlantic, or both).
+    fun downloadSubtitles(key: String, langs: List<String>, sources: List<String> = SUBTITLE_SOURCES) = viewModelScope.launch {
         val d = devicesVm.selectedDeviceId.value ?: return@launch
         val picked = langs.ifEmpty { listOf("ar", "en") }
-        val r = ServiceLocator.sendCommand(d, "subs-download", mapOf("key" to key, "langs" to picked.joinToString(",")))
+        val scope = sources.ifEmpty { SUBTITLE_SOURCES }
+        val r = ServiceLocator.sendCommand(
+            d,
+            "subs-download",
+            mapOf(
+                "key" to key,
+                "langs" to picked.joinToString(","),
+                "sources" to scope.joinToString(","),
+            ),
+        )
         val err = r.exceptionOrNull()
         if (err != null) {
             _error.value = err.message
         } else {
-            _notice.value = "Downloading ${picked.joinToString(", ")} — you'll get an Activity alert when it's done"
+            val from = if (scope.size > 1) "Cinejoy + Atlantic" else subtitleSourceLabel(scope.first())
+            _notice.value = "Downloading ${picked.joinToString(", ")} from $from — you'll get an Activity alert when it's done"
         }
         _subLangs.value = SubtitleLangState.Idle
     }

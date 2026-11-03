@@ -83,6 +83,8 @@ import com.nedal.cinejoyremote.ui.v3.components.V3Sheet
 import com.nedal.cinejoyremote.presentation.SubtitleLangState
 import com.nedal.cinejoyremote.presentation.SubtitleLinkState
 import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
+import com.nedal.cinejoyremote.presentation.subtitleSourceLabel
+import com.nedal.cinejoyremote.presentation.subtitleSourcesFor
 
 // ---------------------------------------------------------------- helpers
 // The source-pane JSON helpers (str/int/bool/arr/heightOf) moved to
@@ -458,7 +460,7 @@ fun V3DetailScreen(
         V3SubtitleLangDialog(
             state = subLangsState,
             onDismiss = { langTarget = null; vm.clearSubtitleLanguages() },
-            onDownload = { key, langs -> langTarget = null; vm.downloadSubtitles(key, langs) },
+            onDownload = { key, langs, sources -> langTarget = null; vm.downloadSubtitles(key, langs, sources) },
         )
     }
 
@@ -478,7 +480,7 @@ fun V3DetailScreen(
 private fun V3SubtitleLangDialog(
     state: SubtitleLangState,
     onDismiss: () -> Unit,
-    onDownload: (String, List<String>) -> Unit,
+    onDownload: (String, List<String>, List<String>) -> Unit,
 ) {
     val c = v3
     when (state) {
@@ -505,10 +507,14 @@ private fun V3SubtitleLangDialog(
 private fun V3SubtitleLangReadyDialog(
     state: SubtitleLangState.Ready,
     onDismiss: () -> Unit,
-    onDownload: (String, List<String>) -> Unit,
+    onDownload: (String, List<String>, List<String>) -> Unit,
 ) {
     val c = v3
-    var selected by remember(state.key) { mutableStateOf(defaultSubtitleLangs(state.languages)) }
+    // Subtitle source scope: both by default, so one press takes everything the
+    // two providers have for this episode.
+    var scope by remember(state.key) { mutableStateOf("all") }
+    val rows = if (scope == "all") state.languages else state.bySource[scope].orEmpty()
+    var selected by remember(state.key, scope) { mutableStateOf(defaultSubtitleLangs(rows)) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.sheet,
@@ -518,17 +524,30 @@ private fun V3SubtitleLangReadyDialog(
                 Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(V3Space.xs),
             ) {
+                val shownTotal = rows.sumOf { it.count }
                 Text(
-                    if (state.languages.isEmpty()) {
-                        "No matching subtitles found for this episode."
+                    if (rows.isEmpty()) {
+                        "No subtitles for this episode on ${subtitleSourceLabel(scope)}."
                     } else {
-                        "${state.total} subtitle${if (state.total == 1) "" else "s"} available in " +
-                            "${state.languages.size} language${if (state.languages.size == 1) "" else "s"}"
+                        "$shownTotal subtitle${if (shownTotal == 1) "" else "s"} available in " +
+                            "${rows.size} language${if (rows.size == 1) "" else "s"} on ${subtitleSourceLabel(scope)}"
                     },
                     style = V3Type.caption,
                     color = c.textSecondary,
                 )
-                state.languages.forEach { lang ->
+                Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                    listOf("all", "cinejoy", "atlantic").forEach { option ->
+                        TextButton(onClick = { scope = option }) {
+                            Text(
+                                subtitleSourceLabel(option),
+                                style = V3Type.caption12,
+                                color = if (scope == option) c.activeText else c.textSecondary,
+                                fontWeight = if (scope == option) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+                rows.forEach { lang ->
                     val checked = lang.code in selected
                     Row(
                         Modifier
@@ -552,15 +571,24 @@ private fun V3SubtitleLangReadyDialog(
                         )
                         Column(horizontalAlignment = Alignment.End) {
                             Text("${lang.count} available", style = V3Type.caption12, color = c.textSecondary)
+                            if (lang.bySource.size > 1) {
+                                Text(
+                                    lang.bySource.entries.joinToString(" · ") { (src, n) ->
+                                        "${if (src == "atlantic") "Atlantic" else "Cinejoy"} $n"
+                                    },
+                                    style = V3Type.caption12,
+                                    color = c.textTertiary,
+                                )
+                            }
                             if (lang.existing > 0) {
                                 Text("${lang.existing} downloaded", style = V3Type.caption12, color = c.textTertiary)
                             }
                         }
                     }
                 }
-                if (state.languages.isNotEmpty()) {
+                if (rows.isNotEmpty()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
-                        TextButton(onClick = { selected = state.languages.map { it.code }.toSet() }) {
+                        TextButton(onClick = { selected = rows.map { it.code }.toSet() }) {
                             Text("All", style = V3Type.caption, color = c.textSecondary)
                         }
                         TextButton(onClick = { selected = emptySet() }) {
@@ -573,7 +601,7 @@ private fun V3SubtitleLangReadyDialog(
         confirmButton = {
             TextButton(
                 enabled = selected.isNotEmpty(),
-                onClick = { onDownload(state.key, selected.toList()) },
+                onClick = { onDownload(state.key, selected.toList(), subtitleSourcesFor(scope)) },
             ) {
                 Text(
                     if (selected.isEmpty()) "Download" else "Download (${selected.size})",
