@@ -105,6 +105,7 @@ fun V3SourcePane(
         "movy" -> V3MovyPane(data, stateKey, starting, onQueue, speed, onSpeed)
         "akwam" -> V3AkwamPane(data, stateKey, starting, onQueue, speed, onSpeed)
         "7movies" -> V3Movies7Pane(data, stateKey, starting, onQueue, speed, onSpeed)
+        "atlantic" -> V3AtlanticPane(data, stateKey, starting, onQueue, speed, onSpeed)
         else -> V3CinejoyPane(data, stateKey, starting, onQueue, onRefresh, speed, onSpeed)
     }
 }
@@ -471,6 +472,79 @@ private fun V3Movies7Pane(
                     e.str("server")?.let { put("server", it) }
                     put("qualityLabel", quality)
                     (heightOf(quality) ?: e.int("height"))?.let { put("quality", it.toString()) }
+                    e.str("id")?.let { put("sourceEntry", it) }
+                },
+            )
+        }
+    }
+}
+
+// --- Atlantic: the fifth site, one row per provider stream it resolved
+// (server + audio + quality ladder + estimated size). Starting a download sends
+// the same Atlantic payload the desktop sends: source=atlantic + the entry id.
+@Composable
+private fun V3AtlanticPane(
+    data: JsonObject,
+    stateKey: String,
+    starting: Boolean,
+    onQueue: (Map<String, String>) -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
+) {
+    val c = v3
+    val entries = data.arr("entries")
+    if (entries.isEmpty()) {
+        Text("No Atlantic streams found for this item.", style = V3Type.body14, color = c.textSecondary)
+        return
+    }
+    var selectedIndex by remember(stateKey) { mutableIntStateOf(0) }
+    val entry = entries.getOrNull(selectedIndex)
+
+    Column(verticalArrangement = Arrangement.spacedBy(V3Space.sm)) {
+        entries.forEachIndexed { i, e ->
+            val label = e.str("server") ?: "Stream ${i + 1}"
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(V3Radius.sm))
+                    .background(if (selectedIndex == i) c.accent.copy(alpha = 0.14f) else c.surface)
+                    .clickable { selectedIndex = i }
+                    .padding(horizontal = V3Space.md, vertical = V3Space.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = selectedIndex == i, onClick = null)
+                Column(Modifier.weight(1f)) {
+                    Text(label, style = V3Type.itemTitle, color = c.text)
+                    Text(
+                        listOfNotNull(
+                            e.str("audio")?.takeIf { it.isNotBlank() },
+                            e.str("quality")?.takeIf { it.isNotBlank() },
+                            e.str("size")?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ").ifBlank { e.str("kind") ?: "stream" },
+                        style = V3Type.caption,
+                        color = c.textTertiary,
+                    )
+                }
+                val url = e.str("url")?.takeIf { u -> u.startsWith("http") }
+                if (url != null) {
+                    val id = "$stateKey|atlantic|$i"
+                    SpeedChip(
+                        test = speed[id],
+                        onClick = { onSpeed(id, url) },
+                        modifier = Modifier.padding(start = V3Space.sm),
+                    )
+                }
+            }
+        }
+
+        V3StartButton(starting && entry != null) {
+            val e = entry ?: return@V3StartButton
+            onQueue(
+                buildMap {
+                    put("source", "atlantic")
+                    e.str("server")?.let { put("server", it) }
+                    e.str("quality")?.let { put("qualityLabel", it) }
+                    e.int("height")?.let { put("quality", it.toString()) }
                     e.str("id")?.let { put("sourceEntry", it) }
                 },
             )

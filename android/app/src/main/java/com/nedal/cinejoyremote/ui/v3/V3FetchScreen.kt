@@ -53,13 +53,6 @@ import com.nedal.cinejoyremote.ui.v3.components.SpeedChip
 import com.nedal.cinejoyremote.ui.v3.components.V3Divider
 import com.nedal.cinejoyremote.ui.v3.components.V3SourcePane
 
-private val SOURCE_LABELS = mapOf(
-    "cinejoy" to "Cinejoy",
-    "movy" to "Movy",
-    "akwam" to "AKWAM",
-    "7movies" to "7Movies",
-)
-
 /**
  * The fetch queue: every title the user asked links for, with all 3 sources
  * side by side and live.
@@ -324,7 +317,7 @@ private fun SourceRow(
         }
         Spacer(Modifier.width(V3Space.sm))
         Text(
-            SOURCE_LABELS[source] ?: source,
+            FetchJob.SOURCE_LABELS[source] ?: source,
             style = V3Type.body14,
             color = when {
                 hasData -> c.text
@@ -353,7 +346,7 @@ private fun SourceRow(
         SpeedChip(test = test, onClick = onSpeedTest)
         if (error != null || hasData) {
             androidx.compose.material3.IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Rounded.Refresh, "Refresh ${SOURCE_LABELS[source]}", tint = c.textTertiary, modifier = Modifier.size(16.dp))
+                Icon(Icons.Rounded.Refresh, "Refresh ${FetchJob.SOURCE_LABELS[source]}", tint = c.textTertiary, modifier = Modifier.size(16.dp))
             }
         }
     }

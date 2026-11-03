@@ -177,6 +177,9 @@ object SpeedTester {
             host.contains("vidrift") -> "https://embed.vidrift.net/"
             host.contains("bright67") || host.contains("cinejoy") || host.contains("lightspeed") -> "https://cinejoy.pk/"
             host.contains("movy") -> "https://www.movy.sx/"
+            // Atlantic's media sits on the hls.lol network; its player sends
+            // atlantic.st as the referer.
+            host.contains("hls.lol") -> "https://atlantic.st/"
             else -> "${parsed.protocol}://$host/"
         }
     }

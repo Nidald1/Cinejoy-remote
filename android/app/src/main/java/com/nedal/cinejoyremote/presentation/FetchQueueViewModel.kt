@@ -56,7 +56,7 @@ data class SpeedTest(
     val at: Long = 0L,
 )
 
-/** One queued episode/movie plus the per-source slots for the 3 sources. */
+/** One queued episode/movie plus a slot per source in [FetchJob.SOURCE_KEYS]. */
 data class FetchJob(
     val key: String,
     val showId: String,
@@ -72,7 +72,17 @@ data class FetchJob(
     val readyCount get() = SOURCE_KEYS.count { sources[it]?.hasData == true }
 
     companion object {
-        val SOURCE_KEYS = listOf("cinejoy", "movy", "akwam", "7movies")
+        // Every source the PC can resolve. Atlantic (atlantic.st) is the fifth
+        // site and a full video source on the PC, so it belongs in this list;
+        // the screens render whatever is here instead of their own copies.
+        val SOURCE_KEYS = listOf("cinejoy", "movy", "akwam", "7movies", "atlantic")
+        val SOURCE_LABELS = mapOf(
+            "cinejoy" to "Cinejoy",
+            "movy" to "Movy",
+            "akwam" to "AKWAM",
+            "7movies" to "7Movies",
+            "atlantic" to "Atlantic",
+        )
     }
 }
 
@@ -133,7 +143,7 @@ class FetchQueueViewModel(
     // One Cinejoy capture at a time — mirrors the PC's own capture chain so a
     // deep queue can't starve any single command's 120s deadline.
     private val cineLane = Semaphore(1)
-    private val webLane = Semaphore(3) // movy + akwam are concurrent HTTP on the PC
+    private val webLane = Semaphore(3) // movy/akwam/7movies/atlantic are concurrent HTTP on the PC
 
     // keys of in-flight commands, e.g. "show:1|s2e3|cinejoy"
     private val inFlight = mutableSetOf<String>()
@@ -293,6 +303,11 @@ class FetchQueueViewModel(
             "akwam" -> ((data["entries"] as? JsonArray) ?: return emptyList()).mapIndexedNotNull { i, el ->
                 val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapIndexedNotNull null
                 val url = http(o, "url") ?: http(o, "downloadPage") ?: return@mapIndexedNotNull null
+                "$key|$source|$i" to url
+            }
+            "atlantic" -> ((data["entries"] as? JsonArray) ?: return emptyList()).mapIndexedNotNull { i, el ->
+                val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapIndexedNotNull null
+                val url = http(o, "url") ?: return@mapIndexedNotNull null
                 "$key|$source|$i" to url
             }
             else -> emptyList()
