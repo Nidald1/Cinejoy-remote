@@ -173,6 +173,7 @@ fun ShowDetailScreen(
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
     val subLangsState by vm.subLangs.collectAsState()
+    val epFilesState by vm.epFiles.collectAsState()
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -345,7 +346,7 @@ fun ShowDetailScreen(
                                 onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                 onSubsPublish = { vm.subsPublish(ep.key) },
                                 onSubsClear = { vm.subsClear(ep.key) },
-                                onDelete = { confirmDelete = ep },
+                                onDelete = { confirmDelete = ep; vm.loadEpisodeFiles(ep.key) },
                             )
                         }
                     } else {
@@ -372,7 +373,7 @@ fun ShowDetailScreen(
                                 onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                 onSubsPublish = { vm.subsPublish(ep.key) },
                                 onSubsClear = { vm.subsClear(ep.key) },
-                                onDelete = { confirmDelete = ep },
+                                onDelete = { confirmDelete = ep; vm.loadEpisodeFiles(ep.key) },
                             )
                         }
                     }
@@ -410,15 +411,13 @@ fun ShowDetailScreen(
         )
     }
 
+    // Delete picker: every file the episode owns on the PC — each source's
+    // video, .part leftovers, published and archived subtitles — tick what goes.
     confirmDelete?.let { ep ->
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("Delete episode files?") },
-            text = { Text("Removes the downloaded video and part files for this episode on the PC.") },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = null; vm.deleteEpisode(ep.key) }) { Text("Delete") }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
+        EpisodeFilesDialog(
+            state = epFilesState,
+            onDismiss = { confirmDelete = null; vm.clearEpisodeFiles() },
+            onDelete = { paths -> confirmDelete = null; vm.deleteEpisodeFiles(ep.key, paths) },
         )
     }
 

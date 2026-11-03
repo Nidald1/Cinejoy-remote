@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.nedal.cinejoyremote.ui.EpisodeFilesDialog
 import coil.compose.AsyncImage
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
@@ -137,6 +138,7 @@ fun V3DetailScreen(
     val notice by vm.notice.collectAsState()
     val subSourcesState by vm.subSources.collectAsState()
     val subLangsState by vm.subLangs.collectAsState()
+    val epFilesState by vm.epFiles.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var menuOpen by remember { mutableStateOf(false) }
@@ -246,7 +248,7 @@ fun V3DetailScreen(
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
                                         onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
-                                        onDelete = { confirmDelete = ep },
+                                        onDelete = { confirmDelete = ep; vm.loadEpisodeFiles(ep.key) },
                                     )
                                 }
                             }
@@ -303,7 +305,7 @@ fun V3DetailScreen(
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
                                         onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
-                                        onDelete = { confirmDelete = ep },
+                                        onDelete = { confirmDelete = ep; vm.loadEpisodeFiles(ep.key) },
                                     )
                                 }
                             }
@@ -437,21 +439,19 @@ fun V3DetailScreen(
         )
     }
 
+    // Delete picker: every file the episode owns on the PC — each source's
+    // video, .part leftovers, published and archived subtitles — tick what goes.
     confirmDelete?.let { ep ->
         val cc = v3
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
+        EpisodeFilesDialog(
+            state = epFilesState,
+            onDismiss = { confirmDelete = null; vm.clearEpisodeFiles() },
+            onDelete = { paths -> confirmDelete = null; vm.deleteEpisodeFiles(ep.key, paths) },
             containerColor = cc.sheet,
-            title = { Text("Delete episode files?", color = cc.text) },
-            text = {
-                Text("Removes the downloaded video and part files for this episode on the PC.", color = cc.textSecondary)
-            },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = null; vm.deleteEpisode(ep.key) }) { Text("Delete", color = cc.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = null }) { Text("Cancel", color = cc.textSecondary) }
-            },
+            titleColor = cc.text,
+            bodyColor = cc.textSecondary,
+            dangerColor = cc.error,
+            checkColor = cc.text,
         )
     }
 

@@ -334,6 +334,46 @@ private fun parseSubtitleLanguages(obj: JsonObject?): Triple<List<SubtitleLang>,
     return Triple(languages, total, bySource)
 }
 
+// ------------------------------------------------------- delete episode files
+// Deleting used to guess file names on the PC ("<clean name>.*"), so a tagged
+// download ("S01E01 - Freedom Day [movy - miami - 1080p - 2d6f38e6].mp4") was
+// never matched: the phone said "Files deleted" and the file stayed on disk. The
+// PC now lists what the episode really owns (every source's video, .part
+// leftovers, published and archived subtitles) and deletes exactly the paths
+// ticked in the dialog.
+sealed interface EpisodeFilesState {
+    data object Idle : EpisodeFilesState
+    data class Loading(val key: String) : EpisodeFilesState
+    data class Failed(val key: String, val message: String) : EpisodeFilesState
+    data class Ready(val key: String, val files: List<EpisodeFile>, val bytes: Long) : EpisodeFilesState
+    data class Deleting(val key: String, val count: Int) : EpisodeFilesState
+}
+
+data class EpisodeFile(
+    val path: String,
+    val name: String,
+    val kind: String, // video | part | subtitle | archive
+    val size: Long,
+    val lang: String = "",
+)
+
+private fun parseEpisodeFiles(obj: JsonObject?): Pair<List<EpisodeFile>, Long> {
+    if (obj == null) return emptyList<EpisodeFile>() to 0L
+    val files = (obj["files"] as? JsonArray)?.mapNotNull { element ->
+        val o = element as? JsonObject ?: return@mapNotNull null
+        fun field(name: String) = o[name]?.jsonPrimitive?.contentOrNull
+        EpisodeFile(
+            path = field("path") ?: return@mapNotNull null,
+            name = field("name") ?: "",
+            kind = field("kind") ?: "video",
+            size = field("size")?.toLongOrNull() ?: 0L,
+            lang = field("lang") ?: "",
+        )
+    } ?: emptyList()
+    val bytes = obj["bytes"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: files.sumOf { it.size }
+    return files to bytes
+}
+
 // What the source picker shows while the PC resolves servers/qualities.
 sealed interface SourceInfoState {
     data object Idle : SourceInfoState
@@ -497,7 +537,65 @@ class ShowDetailViewModel(
     fun subsPublish(key: String) = op("subs-publish", mapOf("key" to key), "Subtitles published next to the video")
     fun subsPublishAll() = op("subs-publish-all", success = "All subtitles published")
     fun subsClear(key: String) = op("subs-clear", mapOf("key" to key, "lang" to "ar"), "Arabic subtitles cleared")
-    fun deleteEpisode(key: String) = op("ep-delete", mapOf("key" to key), "Files deleted")
+
+    // ---- delete picker (videos from every source, subtitles, leftovers)
+    private val _epFiles = MutableStateFlow<EpisodeFilesState>(EpisodeFilesState.Idle)
+    val epFiles: StateFlow<EpisodeFilesState> = _epFiles
+
+    fun loadEpisodeFiles(key: String) = viewModelScope.launch {
+        _epFiles.value = EpisodeFilesState.Loading(key)
+        val r = exec("ep-files", mapOf("key" to key), timeoutMs = 40_000)
+        val err = r.exceptionOrNull()
+        val obj = r.getOrNull()
+        val failed = obj?.get("ok")?.jsonPrimitive?.contentOrNull == "false"
+        _epFiles.value = when {
+            err != null -> EpisodeFilesState.Failed(key, err.message ?: "could not reach the PC")
+            obj == null -> EpisodeFilesState.Failed(key, "the PC sent nothing back")
+            failed -> EpisodeFilesState.Failed(
+                key,
+                obj["error"]?.jsonPrimitive?.contentOrNull ?: "could not list the files",
+            )
+            else -> {
+                val parsed = parseEpisodeFiles(obj)
+                EpisodeFilesState.Ready(key, parsed.first, parsed.second)
+            }
+        }
+    }
+
+    fun deleteEpisodeFiles(key: String, paths: List<String>) = viewModelScope.launch {
+        if (paths.isEmpty()) return@launch
+        _epFiles.value = EpisodeFilesState.Deleting(key, paths.size)
+        // Newline-joined: file names contain commas, brackets and dots.
+        val r = exec(
+            "ep-delete-files",
+            mapOf("key" to key, "paths" to paths.joinToString("\n")),
+            timeoutMs = 60_000,
+        )
+        val err = r.exceptionOrNull()
+        val obj = r.getOrNull()
+        if (err != null) {
+            _error.value = err.message
+            _epFiles.value = EpisodeFilesState.Idle
+            return@launch
+        }
+        if (obj?.get("ok")?.jsonPrimitive?.contentOrNull == "false") {
+            _error.value = obj["error"]?.jsonPrimitive?.contentOrNull ?: "the PC could not delete those files"
+        } else {
+            val deleted = obj?.get("deleted")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+            val failed = obj?.get("failed")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+            _notice.value = when {
+                deleted > 0 && failed > 0 -> "Deleted $deleted file(s), $failed could not be removed"
+                deleted > 0 -> "Deleted $deleted file(s) on the PC"
+                failed > 0 -> "The PC could not delete those files"
+                else -> "Those files were already gone"
+            }
+        }
+        _epFiles.value = EpisodeFilesState.Idle
+    }
+
+    fun clearEpisodeFiles() {
+        _epFiles.value = EpisodeFilesState.Idle
+    }
 
     fun queueDownload(key: String, opts: Map<String, String> = emptyMap()) = viewModelScope.launch {
         val r = exec("start-download", opts + mapOf("key" to key))
