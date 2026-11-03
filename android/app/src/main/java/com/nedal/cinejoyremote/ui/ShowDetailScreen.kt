@@ -937,7 +937,7 @@ private fun SourcePickerSheet(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("cinejoy" to "Cinejoy", "movy" to "Movy", "akwam" to "AKWAM").forEach { (key, label) ->
+                listOf("cinejoy" to "Cinejoy", "movy" to "Movy", "akwam" to "AKWAM", "7movies" to "7Movies").forEach { (key, label) ->
                     FilterChip(
                         selected = source == key,
                         onClick = { if (source != key) source = key },
@@ -997,6 +997,7 @@ private fun SourcePane(
     when (source) {
         "movy" -> MovyPane(vm, episode, data, starting)
         "akwam" -> AkwamPane(vm, episode, data, starting)
+        "7movies" -> Movies7Pane(vm, episode, data, starting)
         else -> CinejoyPane(vm, episode, data, starting)
     }
 }
@@ -1236,6 +1237,88 @@ private fun MovyPane(
 }
 
 // --- AKWAM: every quality/server row is its own download option.
+// --- 7Movies: one row per audio track/server, each with its own height ladder.
+@Composable
+private fun Movies7Pane(
+    vm: ShowDetailViewModel,
+    episode: Episode,
+    data: JsonObject,
+    starting: Boolean,
+) {
+    val entries = data.arr("entries")
+    if (entries.isEmpty()) {
+        Text("No 7Movies streams found for this item.", style = MaterialTheme.typography.bodyMedium)
+        return
+    }
+    var selectedIndex by remember(episode.key) { mutableIntStateOf(0) }
+    var pickedQuality by remember(episode.key) { mutableStateOf<String?>(null) }
+    val entry = entries.getOrNull(selectedIndex)
+    val qualities = entry?.str("qualitiesCsv")?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+    val quality = pickedQuality?.takeIf { qualities.contains(it) } ?: qualities.firstOrNull() ?: entry?.str("label") ?: "Auto"
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        entries.forEachIndexed { i, e ->
+            val label = e.str("server") ?: "Stream ${i + 1}"
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (selectedIndex == i) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { selectedIndex = i; pickedQuality = null },
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selectedIndex == i, onClick = null)
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            listOfNotNull(
+                                e.str("provider")?.takeIf { it.isNotBlank() && it != label },
+                                e.str("qualitiesCsv")?.takeIf { it.isNotBlank() },
+                            ).joinToString(" · ").ifBlank { "HLS stream" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (qualities.size > 1) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                qualities.forEach { q ->
+                    FilterChip(
+                        selected = q == quality,
+                        onClick = { pickedQuality = q },
+                        label = { Text(q) },
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                val e = entry ?: return@Button
+                vm.queueDownload(
+                    episode.key,
+                    buildMap {
+                        put("source", "7movies")
+                        e.str("server")?.let { put("server", it) }
+                        put("qualityLabel", quality)
+                        (heightOf(quality) ?: e.int("height"))?.let { put("quality", it.toString()) }
+                        e.str("id")?.let { put("sourceEntry", it) }
+                    },
+                )
+            },
+            enabled = !starting && entry != null,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (starting) "Starting…" else "Download $quality") }
+    }
+}
+
 @Composable
 private fun AkwamPane(
     vm: ShowDetailViewModel,

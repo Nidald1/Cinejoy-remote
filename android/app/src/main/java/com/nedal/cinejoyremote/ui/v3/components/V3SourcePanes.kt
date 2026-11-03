@@ -104,6 +104,7 @@ fun V3SourcePane(
     when (source) {
         "movy" -> V3MovyPane(data, stateKey, starting, onQueue, speed, onSpeed)
         "akwam" -> V3AkwamPane(data, stateKey, starting, onQueue, speed, onSpeed)
+        "7movies" -> V3Movies7Pane(data, stateKey, starting, onQueue, speed, onSpeed)
         else -> V3CinejoyPane(data, stateKey, starting, onQueue, onRefresh, speed, onSpeed)
     }
 }
@@ -374,6 +375,102 @@ private fun V3MovyPane(
                     selectedServer?.let { put("server", it) }
                     selectedLabel?.let { put("qualityLabel", it) }
                     (src?.int("height") ?: heightOf(selectedLabel))?.let { put("quality", it.toString()) }
+                },
+            )
+        }
+    }
+}
+
+// --- 7Movies: one row per audio track/server, each with its own height ladder.
+@Composable
+private fun V3Movies7Pane(
+    data: JsonObject,
+    stateKey: String,
+    starting: Boolean,
+    onQueue: (Map<String, String>) -> Unit,
+    speed: Map<String, SpeedTest>,
+    onSpeed: (id: String, url: String) -> Unit,
+) {
+    val c = v3
+    val entries = data.arr("entries")
+    if (entries.isEmpty()) {
+        Text("No 7Movies streams found for this item.", style = V3Type.body14, color = c.textSecondary)
+        return
+    }
+    var selectedIndex by remember(stateKey) { mutableIntStateOf(0) }
+    var pickedQuality by remember(stateKey) { mutableStateOf<String?>(null) }
+    val entry = entries.getOrNull(selectedIndex)
+    val qualities = entry?.str("qualitiesCsv")?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+    val quality = pickedQuality?.takeIf { qualities.contains(it) }
+        ?: qualities.firstOrNull()
+        ?: entry?.str("label")
+        ?: "Auto"
+
+    Column(verticalArrangement = Arrangement.spacedBy(V3Space.sm)) {
+        entries.forEachIndexed { i, e ->
+            val label = e.str("server") ?: "Stream ${i + 1}"
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(V3Radius.sm))
+                    .background(if (selectedIndex == i) c.accent.copy(alpha = 0.14f) else c.surface)
+                    .clickable { selectedIndex = i; pickedQuality = null }
+                    .padding(horizontal = V3Space.md, vertical = V3Space.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = selectedIndex == i, onClick = null)
+                Column(Modifier.weight(1f)) {
+                    Text(label, style = V3Type.itemTitle, color = c.text)
+                    Text(
+                        listOfNotNull(
+                            e.str("provider")?.takeIf { it.isNotBlank() && it != label },
+                            e.str("qualitiesCsv")?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ").ifBlank { "HLS stream" },
+                        style = V3Type.caption,
+                        color = c.textTertiary,
+                    )
+                }
+                val url = e.str("url")?.takeIf { u -> u.startsWith("http") }
+                if (url != null) {
+                    SpeedChip(
+                        test = speed["$stateKey|7movies|$i"],
+                        onClick = { onSpeed("$stateKey|7movies|$i", url) },
+                        modifier = Modifier.padding(start = V3Space.sm),
+                    )
+                }
+            }
+        }
+
+        if (qualities.size > 1) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(V3Space.sm),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                qualities.forEach { q ->
+                    val active = q == quality
+                    Text(
+                        q,
+                        style = V3Type.caption,
+                        color = if (active) c.accent else c.textSecondary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(V3Radius.pill))
+                            .background(if (active) c.accent.copy(alpha = 0.14f) else c.surface)
+                            .clickable { pickedQuality = q }
+                            .padding(horizontal = V3Space.sm, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+
+        V3StartButton(starting && entry != null) {
+            val e = entry ?: return@V3StartButton
+            onQueue(
+                buildMap {
+                    put("source", "7movies")
+                    e.str("server")?.let { put("server", it) }
+                    put("qualityLabel", quality)
+                    (heightOf(quality) ?: e.int("height"))?.let { put("quality", it.toString()) }
+                    e.str("id")?.let { put("sourceEntry", it) }
                 },
             )
         }

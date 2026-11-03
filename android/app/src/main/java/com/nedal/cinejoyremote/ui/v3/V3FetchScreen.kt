@@ -57,6 +57,7 @@ private val SOURCE_LABELS = mapOf(
     "cinejoy" to "Cinejoy",
     "movy" to "Movy",
     "akwam" to "AKWAM",
+    "7movies" to "7Movies",
 )
 
 /**

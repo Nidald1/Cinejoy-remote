@@ -72,7 +72,7 @@ data class FetchJob(
     val readyCount get() = SOURCE_KEYS.count { sources[it]?.hasData == true }
 
     companion object {
-        val SOURCE_KEYS = listOf("cinejoy", "movy", "akwam")
+        val SOURCE_KEYS = listOf("cinejoy", "movy", "akwam", "7movies")
     }
 }
 
@@ -284,6 +284,11 @@ class FetchQueueViewModel(
                     .firstNotNullOfOrNull { s -> (s as? JsonObject)?.let { http(it, "url") } }
                     ?: return@mapNotNull null
                 "$key|$source|$srv" to url
+            }
+            "7movies" -> ((data["entries"] as? JsonArray) ?: return emptyList()).mapIndexedNotNull { i, el ->
+                val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapIndexedNotNull null
+                val url = http(o, "url") ?: return@mapIndexedNotNull null
+                "$key|$source|$i" to url
             }
             "akwam" -> ((data["entries"] as? JsonArray) ?: return emptyList()).mapIndexedNotNull { i, el ->
                 val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapIndexedNotNull null
