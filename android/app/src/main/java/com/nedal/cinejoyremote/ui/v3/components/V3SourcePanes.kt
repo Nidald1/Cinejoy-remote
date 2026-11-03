@@ -424,6 +424,7 @@ private fun V3Movies7Pane(
                     Text(
                         listOfNotNull(
                             e.str("provider")?.takeIf { it.isNotBlank() && it != label },
+                            e.str("size")?.takeIf { it.isNotBlank() },
                             e.str("qualitiesCsv")?.takeIf { it.isNotBlank() },
                         ).joinToString(" · ").ifBlank { "HLS stream" },
                         style = V3Type.caption,
