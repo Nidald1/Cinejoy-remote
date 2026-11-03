@@ -3,6 +3,7 @@ package com.nedal.cinejoyremote.update
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -94,16 +95,49 @@ object ApkInstaller {
             }
             onProgress(1f)
 
+            // Trust the file, not the release tag. v5.7.0 shipped an APK built
+            // from 5.6.3 sources, so "updating" reinstalled the same build: the
+            // app kept reporting 5.6.3 and the prompt kept offering 5.7.0
+            // forever. Refuse a download that is not actually newer, and say so.
+            val archive = ctx.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            val archiveCode = archive?.let { versionCodeOf(it) }
+            if (archiveCode != null && archiveCode <= installedVersionCode(ctx)) {
+                val shipped = archive.versionName ?: "an older build"
+                file.delete()
+                return Result.failure(
+                    IllegalStateException(
+                        "release ${info.version} still ships $shipped " +
+                            "(installed: ${currentVersionName(ctx)}) - nothing newer to install",
+                    ),
+                )
+            }
+
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
             val install = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
-            ctx.startActivity(install)
-            Result.success(Unit)
+            return try {
+                ctx.startActivity(install)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(
+                    IllegalStateException("could not open the installer: ${e.message ?: "no app can install packages"}"),
+                )
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun versionCodeOf(info: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+
+    @Suppress("DEPRECATION")
+    private fun installedVersionCode(ctx: Context): Long = try {
+        versionCodeOf(ctx.packageManager.getPackageInfo(ctx.packageName, 0))
+    } catch (_: Exception) {
+        0L
     }
 
     private fun failureReason(reason: Int): String = when (reason) {
