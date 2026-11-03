@@ -259,6 +259,51 @@ private fun parseSubtitleLink(obj: JsonObject?): Pair<List<VideoTarget>, List<Su
     return videos to subtitles
 }
 
+// ------------------------------------------------------ subtitle languages
+// "Get subtitles" asks the PC what its sources list for this episode, then the
+// phone shows the same rows as the desktop modal: one per language, with how
+// many are available and how many are already saved, and only ticked ones are
+// downloaded. This replaces the old blind `langs = "ar,en"` sweep.
+sealed interface SubtitleLangState {
+    data object Idle : SubtitleLangState
+    data class Loading(val key: String) : SubtitleLangState
+    data class Failed(val message: String) : SubtitleLangState
+    data class Ready(
+        val key: String,
+        val languages: List<SubtitleLang>,
+        val total: Int,
+    ) : SubtitleLangState
+}
+
+data class SubtitleLang(val code: String, val name: String, val count: Int, val existing: Int)
+
+// Same rule as the desktop picker: Arabic, else English, else the first row.
+fun defaultSubtitleLangs(langs: List<SubtitleLang>): Set<String> {
+    val codes = langs.map { it.code }
+    return when {
+        codes.contains("ar") -> setOf("ar")
+        codes.contains("en") -> setOf("en")
+        codes.isNotEmpty() -> setOf(codes.first())
+        else -> emptySet()
+    }
+}
+
+private fun parseSubtitleLanguages(obj: JsonObject?): Pair<List<SubtitleLang>, Int> {
+    if (obj == null) return emptyList<SubtitleLang>() to 0
+    val languages = (obj["languages"] as? JsonArray)?.mapNotNull { element ->
+        val o = element as? JsonObject ?: return@mapNotNull null
+        fun field(name: String) = o[name]?.jsonPrimitive?.contentOrNull
+        SubtitleLang(
+            code = field("code") ?: return@mapNotNull null,
+            name = field("name") ?: "",
+            count = field("count")?.toIntOrNull() ?: 0,
+            existing = field("existing")?.toIntOrNull() ?: 0,
+        )
+    } ?: emptyList()
+    val total = obj["total"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: languages.sumOf { it.count }
+    return languages to total
+}
+
 // What the source picker shows while the PC resolves servers/qualities.
 sealed interface SourceInfoState {
     data object Idle : SourceInfoState
@@ -337,16 +382,41 @@ class ShowDetailViewModel(
     fun removeFromPc() = op("catalog-remove", mapOf("showId" to (_showId.value ?: "")), "Removed from the PC")
     fun watchedToggle(key: String) = op("watched-toggle", mapOf("key" to key))
 
-    // Subtitle sweeps on the PC can run for minutes (hundreds of files), so
-    // this is fire-and-forget: the PC posts an Activity event when it ends
-    // and the episode row refreshes with the new subtitle counts.
-    fun subsDownload(key: String) = viewModelScope.launch {
-        val d = devicesVm.selectedDeviceId.value ?: return@launch
-        val r = ServiceLocator.sendCommand(d, "subs-download", mapOf("key" to key, "langs" to "ar,en"))
+    // Subtitle sweeps on the PC can run for minutes (hundreds of files), so the
+    // download itself is fire-and-forget: the PC posts an Activity event when
+    // it ends and the episode row refreshes with the new subtitle counts.
+    private val _subLangs = MutableStateFlow<SubtitleLangState>(SubtitleLangState.Idle)
+    val subLangs: StateFlow<SubtitleLangState> = _subLangs
+
+    fun loadSubtitleLanguages(key: String) = viewModelScope.launch {
+        _subLangs.value = SubtitleLangState.Loading(key)
+        val r = exec("subs-languages", mapOf("key" to key), timeoutMs = 60_000)
         val err = r.exceptionOrNull()
-        if (err != null) _error.value = err.message
-        else _notice.value = "Subtitle download started — you'll get an Activity alert when it's done"
+        _subLangs.value = if (err != null) {
+            SubtitleLangState.Failed(err.message ?: "could not reach the PC")
+        } else {
+            val parsed = parseSubtitleLanguages(r.getOrNull())
+            SubtitleLangState.Ready(key, parsed.first, parsed.second)
+        }
     }
+
+    // Only the languages ticked in the picker are downloaded.
+    fun downloadSubtitles(key: String, langs: List<String>) = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value ?: return@launch
+        val picked = langs.ifEmpty { listOf("ar", "en") }
+        val r = ServiceLocator.sendCommand(d, "subs-download", mapOf("key" to key, "langs" to picked.joinToString(",")))
+        val err = r.exceptionOrNull()
+        if (err != null) {
+            _error.value = err.message
+        } else {
+            _notice.value = "Downloading ${picked.joinToString(", ")} — you'll get an Activity alert when it's done"
+        }
+        _subLangs.value = SubtitleLangState.Idle
+    }
+
+    fun subsDownload(key: String) { downloadSubtitles(key, listOf("ar", "en")) }
+
+    fun clearSubtitleLanguages() { _subLangs.value = SubtitleLangState.Idle }
     // Link subtitles that were already downloaded for this episode (from another
     // source) to the video file on the PC, so nothing is downloaded twice.
     private val _subSources = MutableStateFlow<SubtitleLinkState>(SubtitleLinkState.Idle)

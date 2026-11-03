@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -88,6 +89,8 @@ import com.nedal.cinejoyremote.presentation.SharedTitleState
 import com.nedal.cinejoyremote.presentation.SharedTitleViewModel
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
 import com.nedal.cinejoyremote.presentation.SourceInfoState
+import com.nedal.cinejoyremote.presentation.SubtitleLangState
+import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
 import com.nedal.cinejoyremote.share.TmdbHint
 import com.nedal.cinejoyremote.share.TmdbRef
 import com.nedal.cinejoyremote.ui.components.Artwork
@@ -167,6 +170,7 @@ fun ShowDetailScreen(
     val busy by vm.busy.collectAsState()
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
+    val subLangsState by vm.subLangs.collectAsState()
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -175,6 +179,8 @@ fun ShowDetailScreen(
     var confirmRemove by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<Episode?>(null) }
     var sheetEpisode by remember { mutableStateOf<Episode?>(null) }
+    // Episode whose subtitle-language picker is open.
+    var langTarget by remember { mutableStateOf<Episode?>(null) }
 
     // Seerr accept hands this showId over (DetailPickInbox): once the episodes
     // are loaded, raise the sources window straight away so the user picks the
@@ -334,7 +340,7 @@ fun ShowDetailScreen(
                                 isMovie = true,
                                 onDownload = { sheetEpisode = ep },
                                 onWatched = { vm.watchedToggle(ep.key) },
-                                onSubsDownload = { vm.subsDownload(ep.key) },
+                                onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                 onSubsPublish = { vm.subsPublish(ep.key) },
                                 onSubsClear = { vm.subsClear(ep.key) },
                                 onDelete = { confirmDelete = ep },
@@ -361,7 +367,7 @@ fun ShowDetailScreen(
                                 isMovie = false,
                                 onDownload = { sheetEpisode = ep },
                                 onWatched = { vm.watchedToggle(ep.key) },
-                                onSubsDownload = { vm.subsDownload(ep.key) },
+                                onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                 onSubsPublish = { vm.subsPublish(ep.key) },
                                 onSubsClear = { vm.subsClear(ep.key) },
                                 onDelete = { confirmDelete = ep },
@@ -414,12 +420,126 @@ fun ShowDetailScreen(
         )
     }
 
+    if (langTarget != null) {
+        SubtitleLangDialog(
+            state = subLangsState,
+            onDismiss = { langTarget = null; vm.clearSubtitleLanguages() },
+            onDownload = { key, langs -> langTarget = null; vm.downloadSubtitles(key, langs) },
+        )
+    }
+
     sheetEpisode?.let { ep ->
         SourcePickerSheet(
             vm = vm,
             episode = ep,
             onDismiss = { sheetEpisode = null; vm.clearSourceInfo() },
         )
+    }
+}
+
+// ------------------------------------------------------ subtitle languages
+// "Get subtitles" first asks the PC which languages it actually has for this
+// episode (and how many of each are already saved), then only the ticked ones
+// are downloaded — the same picker the desktop app shows.
+@Composable
+private fun SubtitleLangDialog(
+    state: SubtitleLangState,
+    onDismiss: () -> Unit,
+    onDownload: (String, List<String>) -> Unit,
+) {
+    when (state) {
+        SubtitleLangState.Idle -> Unit
+        is SubtitleLangState.Loading -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Download subtitles") },
+            text = { Text("Asking the PC which languages it can find for this episode…") },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        )
+        is SubtitleLangState.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Download subtitles") },
+            text = { Text(state.message) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+        )
+        is SubtitleLangState.Ready -> {
+            var selected by remember(state.key) { mutableStateOf(defaultSubtitleLangs(state.languages)) }
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("Choose subtitle languages") },
+                text = {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            if (state.languages.isEmpty()) {
+                                "No matching subtitles found for this episode."
+                            } else {
+                                "${state.total} subtitle${if (state.total == 1) "" else "s"} available in " +
+                                    "${state.languages.size} language${if (state.languages.size == 1) "" else "s"}"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        state.languages.forEach { lang ->
+                            val checked = lang.code in selected
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selected = if (checked) selected - lang.code else selected + lang.code
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { on ->
+                                        selected = if (on) selected + lang.code else selected - lang.code
+                                    },
+                                )
+                                Text(
+                                    if (lang.name.isBlank()) lang.code else lang.name,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        "${lang.count} available",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    if (lang.existing > 0) {
+                                        Text(
+                                            "${lang.existing} downloaded",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (state.languages.isNotEmpty()) {
+                            Row {
+                                TextButton(onClick = { selected = state.languages.map { it.code }.toSet() }) {
+                                    Text("All")
+                                }
+                                TextButton(onClick = { selected = emptySet() }) { Text("None") }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = selected.isNotEmpty(),
+                        onClick = { onDownload(state.key, selected.toList()) },
+                    ) {
+                        Text(if (selected.isEmpty()) "Download" else "Download (${selected.size})")
+                    }
+                },
+                dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+            )
+        }
     }
 }
 

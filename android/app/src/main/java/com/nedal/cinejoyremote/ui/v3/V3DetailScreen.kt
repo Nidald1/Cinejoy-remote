@@ -80,7 +80,9 @@ import com.nedal.cinejoyremote.ui.v3.components.SheetRow
 import com.nedal.cinejoyremote.ui.v3.components.Skeleton
 import com.nedal.cinejoyremote.ui.v3.components.V3Pill
 import com.nedal.cinejoyremote.ui.v3.components.V3Sheet
+import com.nedal.cinejoyremote.presentation.SubtitleLangState
 import com.nedal.cinejoyremote.presentation.SubtitleLinkState
+import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
 
 // ---------------------------------------------------------------- helpers
 // The source-pane JSON helpers (str/int/bool/arr/heightOf) moved to
@@ -132,6 +134,7 @@ fun V3DetailScreen(
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
     val subSourcesState by vm.subSources.collectAsState()
+    val subLangsState by vm.subLangs.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var menuOpen by remember { mutableStateOf(false) }
@@ -139,6 +142,8 @@ fun V3DetailScreen(
     var confirmDelete by remember { mutableStateOf<Episode?>(null) }
     // Episode whose saved subtitles the link dialog is showing.
     var linkTarget by remember { mutableStateOf<Episode?>(null) }
+    // Episode whose subtitle-language picker is open.
+    var langTarget by remember { mutableStateOf<Episode?>(null) }
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -235,7 +240,7 @@ fun V3DetailScreen(
                                         isMovie = true,
                                         onDownload = { enqueue(s, ep) },
                                         onWatched = { vm.watchedToggle(ep.key) },
-                                        onSubsDownload = { vm.subsDownload(ep.key) },
+                                        onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
                                         onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
@@ -292,7 +297,7 @@ fun V3DetailScreen(
                                         isMovie = false,
                                         onDownload = { enqueue(s, ep) },
                                         onWatched = { vm.watchedToggle(ep.key) },
-                                        onSubsDownload = { vm.subsDownload(ep.key) },
+                                        onSubsDownload = { langTarget = ep; vm.loadSubtitleLanguages(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
                                         onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
@@ -448,6 +453,15 @@ fun V3DetailScreen(
         )
     }
 
+    // Pick the languages to download (same rows/counts as the desktop modal).
+    if (langTarget != null) {
+        V3SubtitleLangDialog(
+            state = subLangsState,
+            onDismiss = { langTarget = null; vm.clearSubtitleLanguages() },
+            onDownload = { key, langs -> langTarget = null; vm.downloadSubtitles(key, langs) },
+        )
+    }
+
     // Link subtitles already downloaded for this episode to the video on disk.
     if (linkTarget != null) {
         V3LinkSubtitlesDialog(
@@ -456,6 +470,119 @@ fun V3DetailScreen(
             onLink = { key, base, ids -> linkTarget = null; vm.linkSubtitles(key, base, ids) },
         )
     }
+}
+
+// ---------------------------------------------------------------- subtitle languages
+
+@Composable
+private fun V3SubtitleLangDialog(
+    state: SubtitleLangState,
+    onDismiss: () -> Unit,
+    onDownload: (String, List<String>) -> Unit,
+) {
+    val c = v3
+    when (state) {
+        SubtitleLangState.Idle -> Unit
+        is SubtitleLangState.Loading -> AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = c.sheet,
+            title = { Text("Download subtitles", color = c.text) },
+            text = { Text("Asking the PC which languages it can find for this episode…", color = c.textSecondary) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
+        )
+        is SubtitleLangState.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = c.sheet,
+            title = { Text("Download subtitles", color = c.text) },
+            text = { Text(state.message, color = c.textSecondary) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = c.activeText) } },
+        )
+        is SubtitleLangState.Ready -> V3SubtitleLangReadyDialog(state, onDismiss, onDownload)
+    }
+}
+
+@Composable
+private fun V3SubtitleLangReadyDialog(
+    state: SubtitleLangState.Ready,
+    onDismiss: () -> Unit,
+    onDownload: (String, List<String>) -> Unit,
+) {
+    val c = v3
+    var selected by remember(state.key) { mutableStateOf(defaultSubtitleLangs(state.languages)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.sheet,
+        title = { Text("Choose subtitle languages", color = c.text) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(V3Space.xs),
+            ) {
+                Text(
+                    if (state.languages.isEmpty()) {
+                        "No matching subtitles found for this episode."
+                    } else {
+                        "${state.total} subtitle${if (state.total == 1) "" else "s"} available in " +
+                            "${state.languages.size} language${if (state.languages.size == 1) "" else "s"}"
+                    },
+                    style = V3Type.caption,
+                    color = c.textSecondary,
+                )
+                state.languages.forEach { lang ->
+                    val checked = lang.code in selected
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selected = if (checked) selected - lang.code else selected + lang.code
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.Checkbox(
+                            checked = checked,
+                            onCheckedChange = { on ->
+                                selected = if (on) selected + lang.code else selected - lang.code
+                            },
+                        )
+                        Text(
+                            if (lang.name.isBlank()) lang.code else lang.name,
+                            style = V3Type.caption,
+                            color = c.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("${lang.count} available", style = V3Type.caption12, color = c.textSecondary)
+                            if (lang.existing > 0) {
+                                Text("${lang.existing} downloaded", style = V3Type.caption12, color = c.textTertiary)
+                            }
+                        }
+                    }
+                }
+                if (state.languages.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                        TextButton(onClick = { selected = state.languages.map { it.code }.toSet() }) {
+                            Text("All", style = V3Type.caption, color = c.textSecondary)
+                        }
+                        TextButton(onClick = { selected = emptySet() }) {
+                            Text("None", style = V3Type.caption, color = c.textSecondary)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selected.isNotEmpty(),
+                onClick = { onDownload(state.key, selected.toList()) },
+            ) {
+                Text(
+                    if (selected.isEmpty()) "Download" else "Download (${selected.size})",
+                    color = if (selected.isEmpty()) c.textTertiary else c.activeText,
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
+    )
 }
 
 // ---------------------------------------------------------------- link subtitles
