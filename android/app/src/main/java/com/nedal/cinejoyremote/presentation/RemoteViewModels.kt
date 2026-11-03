@@ -216,6 +216,49 @@ class LibraryViewModel(
     }
 }
 
+// ---------------------------------------------------------- link subtitles
+// The PC lists the videos on disk for an episode plus every subtitle file it
+// already has for that title; the phone just picks a video and some files.
+sealed interface SubtitleLinkState {
+    data object Idle : SubtitleLinkState
+    data class Loading(val key: String) : SubtitleLinkState
+    data class Failed(val message: String) : SubtitleLinkState
+    data class Ready(
+        val key: String,
+        val videos: List<VideoTarget>,
+        val subtitles: List<SubtitleChoice>,
+    ) : SubtitleLinkState
+}
+
+data class VideoTarget(val base: String, val name: String, val size: Long, val current: Boolean)
+
+data class SubtitleChoice(val id: String, val lang: String, val label: String, val cues: Int, val linked: Boolean)
+
+private fun parseSubtitleLink(obj: JsonObject?): Pair<List<VideoTarget>, List<SubtitleChoice>> {
+    if (obj == null) return emptyList<VideoTarget>() to emptyList()
+    fun JsonObject.field(name: String) = this[name]?.jsonPrimitive?.contentOrNull
+    val videos = (obj["videos"] as? JsonArray)?.mapNotNull { element ->
+        val o = element as? JsonObject ?: return@mapNotNull null
+        VideoTarget(
+            base = o.field("base") ?: return@mapNotNull null,
+            name = o.field("name") ?: "",
+            size = o.field("size")?.toLongOrNull() ?: 0L,
+            current = o.field("current") == "true",
+        )
+    } ?: emptyList()
+    val subtitles = (obj["subtitles"] as? JsonArray)?.mapNotNull { element ->
+        val o = element as? JsonObject ?: return@mapNotNull null
+        SubtitleChoice(
+            id = o.field("id") ?: return@mapNotNull null,
+            lang = o.field("lang") ?: "und",
+            label = o.field("label") ?: "",
+            cues = o.field("cues")?.toIntOrNull() ?: 0,
+            linked = ((o["linked"] as? JsonArray)?.isNotEmpty() ?: false),
+        )
+    } ?: emptyList()
+    return videos to subtitles
+}
+
 // What the source picker shows while the PC resolves servers/qualities.
 sealed interface SourceInfoState {
     data object Idle : SourceInfoState
@@ -304,6 +347,42 @@ class ShowDetailViewModel(
         if (err != null) _error.value = err.message
         else _notice.value = "Subtitle download started — you'll get an Activity alert when it's done"
     }
+    // Link subtitles that were already downloaded for this episode (from another
+    // source) to the video file on the PC, so nothing is downloaded twice.
+    private val _subSources = MutableStateFlow<SubtitleLinkState>(SubtitleLinkState.Idle)
+    val subSources: StateFlow<SubtitleLinkState> = _subSources
+
+    fun loadSubtitleSources(key: String) = viewModelScope.launch {
+        _subSources.value = SubtitleLinkState.Loading(key)
+        val r = exec("subs-sources", mapOf("key" to key), timeoutMs = 25_000)
+        val err = r.exceptionOrNull()
+        _subSources.value = if (err != null) {
+            SubtitleLinkState.Failed(err.message ?: "could not reach the PC")
+        } else {
+            val parsed = parseSubtitleLink(r.getOrNull())
+            SubtitleLinkState.Ready(key, parsed.first, parsed.second)
+        }
+    }
+
+    fun linkSubtitles(key: String, base: String, ids: List<String>) = viewModelScope.launch {
+        // Newline-joined: subtitle file names can contain commas.
+        val r = exec("subs-link", mapOf("key" to key, "base" to base, "ids" to ids.joinToString("\n")), timeoutMs = 30_000)
+        val err = r.exceptionOrNull()
+        if (err != null) {
+            _error.value = err.message
+        } else {
+            val written = r.getOrNull()?.get("published")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+            _notice.value = if (written > 0) {
+                "Subtitles linked — refresh Jellyfin to see them on the new video"
+            } else {
+                "Those subtitles are already next to that video"
+            }
+        }
+        _subSources.value = SubtitleLinkState.Idle
+    }
+
+    fun clearSubtitleSources() { _subSources.value = SubtitleLinkState.Idle }
+
     fun subsPublish(key: String) = op("subs-publish", mapOf("key" to key), "Subtitles published next to the video")
     fun subsPublishAll() = op("subs-publish-all", success = "All subtitles published")
     fun subsClear(key: String) = op("subs-clear", mapOf("key" to key, "lang" to "ar"), "Arabic subtitles cleared")

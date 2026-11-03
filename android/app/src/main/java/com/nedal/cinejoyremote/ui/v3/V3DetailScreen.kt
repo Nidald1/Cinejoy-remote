@@ -80,6 +80,7 @@ import com.nedal.cinejoyremote.ui.v3.components.SheetRow
 import com.nedal.cinejoyremote.ui.v3.components.Skeleton
 import com.nedal.cinejoyremote.ui.v3.components.V3Pill
 import com.nedal.cinejoyremote.ui.v3.components.V3Sheet
+import com.nedal.cinejoyremote.presentation.SubtitleLinkState
 
 // ---------------------------------------------------------------- helpers
 // The source-pane JSON helpers (str/int/bool/arr/heightOf) moved to
@@ -130,11 +131,14 @@ fun V3DetailScreen(
     val busy by vm.busy.collectAsState()
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
+    val subSourcesState by vm.subSources.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var menuOpen by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<Episode?>(null) }
+    // Episode whose saved subtitles the link dialog is showing.
+    var linkTarget by remember { mutableStateOf<Episode?>(null) }
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -234,6 +238,7 @@ fun V3DetailScreen(
                                         onSubsDownload = { vm.subsDownload(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
+                                        onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
                                         onDelete = { confirmDelete = ep },
                                     )
                                 }
@@ -290,6 +295,7 @@ fun V3DetailScreen(
                                         onSubsDownload = { vm.subsDownload(ep.key) },
                                         onSubsPublish = { vm.subsPublish(ep.key) },
                                         onSubsClear = { vm.subsClear(ep.key) },
+                                        onSubsLink = { linkTarget = ep; vm.loadSubtitleSources(ep.key) },
                                         onDelete = { confirmDelete = ep },
                                     )
                                 }
@@ -441,6 +447,175 @@ fun V3DetailScreen(
             },
         )
     }
+
+    // Link subtitles already downloaded for this episode to the video on disk.
+    if (linkTarget != null) {
+        V3LinkSubtitlesDialog(
+            state = subSourcesState,
+            onDismiss = { linkTarget = null; vm.clearSubtitleSources() },
+            onLink = { key, base, ids -> linkTarget = null; vm.linkSubtitles(key, base, ids) },
+        )
+    }
+}
+
+// ---------------------------------------------------------------- link subtitles
+
+private fun v3Bytes(bytes: Long): String = when {
+    bytes >= 1_000_000_000L -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1_000_000_000.0)
+    bytes >= 1_000_000L -> "${bytes / 1_000_000L} MB"
+    else -> "${bytes / 1000L} KB"
+}
+
+@Composable
+private fun V3LinkSubtitlesDialog(
+    state: SubtitleLinkState,
+    onDismiss: () -> Unit,
+    onLink: (String, String, List<String>) -> Unit,
+) {
+    val c = v3
+    when (state) {
+        SubtitleLinkState.Idle -> Unit
+        is SubtitleLinkState.Loading -> AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = c.sheet,
+            title = { Text("Link subtitles", color = c.text) },
+            text = { Text("Reading the subtitles saved for this episode…", color = c.textSecondary) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
+        )
+        is SubtitleLinkState.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = c.sheet,
+            title = { Text("Link subtitles", color = c.text) },
+            text = { Text(state.message, color = c.textSecondary) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = c.activeText) } },
+        )
+        is SubtitleLinkState.Ready -> V3LinkReadyDialog(state, onDismiss, onLink)
+    }
+}
+
+@Composable
+private fun V3LinkReadyDialog(
+    state: SubtitleLinkState.Ready,
+    onDismiss: () -> Unit,
+    onLink: (String, String, List<String>) -> Unit,
+) {
+    val c = v3
+    var base by remember(state.key) {
+        mutableStateOf((state.videos.firstOrNull { it.current } ?: state.videos.firstOrNull())?.base ?: "")
+    }
+    var selected by remember(state.key) {
+        // Pre-tick the best Arabic + English file that is not linked yet: that
+        // is the subtitle the user already has for the other source.
+        val pool = state.subtitles.filter { !it.linked }
+        val defaults = listOf("ar", "en").mapNotNull { lang ->
+            pool.filter { it.lang == lang }.maxByOrNull { it.cues }?.id
+        }
+        mutableStateOf((defaults.ifEmpty { listOfNotNull(state.subtitles.maxByOrNull { it.cues }?.id) }).toSet())
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.sheet,
+        title = { Text("Link subtitles", color = c.text) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(V3Space.xs),
+            ) {
+                Text(
+                    "Reuse the subtitles already downloaded for this episode — nothing is fetched again.",
+                    style = V3Type.caption,
+                    color = c.textSecondary,
+                )
+                if (state.videos.size > 1) {
+                    Text(
+                        "Video file",
+                        style = V3Type.chip,
+                        color = c.text,
+                        modifier = Modifier.padding(top = V3Space.sm),
+                    )
+                    state.videos.forEach { video ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(V3Radius.sm))
+                                .clickable { base = video.base },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = base == video.base,
+                                onClick = { base = video.base },
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(video.name, style = V3Type.caption, color = c.text, maxLines = 2)
+                                Text(
+                                    "${v3Bytes(video.size)}${if (video.current) " · current" else ""}",
+                                    style = V3Type.caption12,
+                                    color = c.textTertiary,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (state.subtitles.isEmpty()) {
+                    Text(
+                        "No subtitles saved for this episode yet — download some first.",
+                        style = V3Type.caption,
+                        color = c.textSecondary,
+                    )
+                } else {
+                    Text(
+                        "Subtitles on disk (${state.subtitles.size})",
+                        style = V3Type.chip,
+                        color = c.text,
+                        modifier = Modifier.padding(top = V3Space.sm),
+                    )
+                    state.subtitles.forEach { subtitle ->
+                        val checked = subtitle.id in selected
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selected = if (checked) selected - subtitle.id else selected + subtitle.id
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = checked,
+                                onCheckedChange = { on ->
+                                    selected = if (on) selected + subtitle.id else selected - subtitle.id
+                                },
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "[${subtitle.lang}] ${subtitle.label}",
+                                    style = V3Type.caption,
+                                    color = c.text,
+                                    maxLines = 2,
+                                )
+                                Text(
+                                    "${subtitle.cues} cues" + if (subtitle.linked) " · linked" else "",
+                                    style = V3Type.caption12,
+                                    color = c.textTertiary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selected.isNotEmpty() && base.isNotBlank(),
+                onClick = { onLink(state.key, base, selected.toList()) },
+            ) {
+                Text(
+                    if (selected.isEmpty()) "Link" else "Link (${selected.size})",
+                    color = if (selected.isEmpty()) c.textTertiary else c.activeText,
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
+    )
 }
 
 @Composable
@@ -651,6 +826,7 @@ private fun V3EpisodeCard(
     onSubsDownload: () -> Unit,
     onSubsPublish: () -> Unit,
     onSubsClear: () -> Unit,
+    onSubsLink: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val c = v3
@@ -805,6 +981,11 @@ private fun V3EpisodeCard(
                         text = { Text("Publish subtitles next to video", color = c.text) },
                         leadingIcon = { Icon(Icons.Rounded.Download, null, tint = c.textSecondary) },
                         onClick = { menuOpen = false; onSubsPublish() },
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Link subtitles from another source", color = c.text) },
+                        leadingIcon = { Icon(Icons.Rounded.Subtitles, null, tint = c.textSecondary) },
+                        onClick = { menuOpen = false; onSubsLink() },
                     )
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("Clear converted (Arabic)", color = c.text) },
