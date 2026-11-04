@@ -659,13 +659,9 @@ private fun V3LinkReadyDialog(
         mutableStateOf((state.videos.firstOrNull { it.current } ?: state.videos.firstOrNull())?.base ?: "")
     }
     var selected by remember(state.key) {
-        // Pre-tick the best Arabic + English file that is not linked yet: that
-        // is the subtitle the user already has for the other source.
-        val pool = state.subtitles.filter { !it.linked }
-        val defaults = listOf("ar", "en").mapNotNull { lang ->
-            pool.filter { it.lang == lang }.maxByOrNull { it.cues }?.id
-        }
-        mutableStateOf((defaults.ifEmpty { listOfNotNull(state.subtitles.maxByOrNull { it.cues }?.id) }).toSet())
+        // Everything this episode already has, pre-ticked: one press moves the
+        // whole set next to the new video, which is the point of the action.
+        mutableStateOf(state.subtitles.filter { !it.linked }.map { it.id }.toSet())
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -677,7 +673,7 @@ private fun V3LinkReadyDialog(
                 verticalArrangement = Arrangement.spacedBy(V3Space.xs),
             ) {
                 Text(
-                    "Reuse the subtitles already downloaded for this episode — nothing is fetched again.",
+                    "Every subtitle already saved for this episode is ticked. Press Link once and they all sit next to the video — nothing is fetched again.",
                     style = V3Type.caption,
                     color = c.textSecondary,
                 )
