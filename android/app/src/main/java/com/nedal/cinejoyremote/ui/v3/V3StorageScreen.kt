@@ -145,6 +145,7 @@ private fun StorageContent(
     var expanded by remember { mutableStateOf(setOf<String>()) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var pending by remember { mutableStateOf<Pair<List<String>, Long>?>(null) }
+    var detail by remember { mutableStateOf<StorageSuggestion?>(null) }
 
     val sizeByPath = remember(snap) {
         buildMap {
@@ -201,6 +202,18 @@ private fun StorageContent(
         expanded = if (expanded.contains(key)) expanded - key else expanded + key
     }
 
+    val openSuggestion = detail
+    if (openSuggestion != null) {
+        SuggestionDetailScreen(
+            snap = snap,
+            suggestion = openSuggestion,
+            deleting = deleting,
+            onBack = { detail = null },
+            onDelete = onDelete,
+        )
+        return
+    }
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             contentPadding = PaddingValues(bottom = 150.dp),
@@ -234,12 +247,10 @@ private fun StorageContent(
                         modifier = Modifier.padding(horizontal = V3Space.gutter).padding(top = V3Space.md),
                     )
                 }
-                items(snap.suggestions, key = { it.id }) { suggestion ->
+                items(snap.suggestions, key = { "suggestion:${it.id}" }) { suggestion ->
                     Box(Modifier.padding(horizontal = V3Space.gutter)) {
                         SuggestionCard(suggestion) {
-                            if (suggestion.paths.isNotEmpty()) {
-                                pending = suggestion.paths to suggestion.bytes
-                            }
+                            if (suggestion.paths.isNotEmpty()) detail = suggestion
                         }
                     }
                 }
@@ -363,10 +374,10 @@ private fun StorageContent(
                             }
                         }
                     } else {
-                        items(watched, key = { it.id }) { suggestion ->
+                        items(watched, key = { "watched-tab:${it.id}" }) { suggestion ->
                             Box(Modifier.padding(horizontal = V3Space.gutter)) {
                                 SuggestionCard(suggestion) {
-                                    pending = suggestion.paths to suggestion.bytes
+                                    if (suggestion.paths.isNotEmpty()) detail = suggestion
                                 }
                             }
                         }
@@ -539,7 +550,7 @@ private fun Legend(label: String, bytes: Long, color: androidx.compose.ui.graphi
 // ---------------------------------------------------------------- cards/rows
 
 @Composable
-private fun SuggestionCard(suggestion: StorageSuggestion, onDelete: () -> Unit) {
+private fun SuggestionCard(suggestion: StorageSuggestion, onOpen: () -> Unit) {
     val c = v3
     val canDelete = suggestion.paths.isNotEmpty()
     Row(
@@ -571,7 +582,7 @@ private fun SuggestionCard(suggestion: StorageSuggestion, onDelete: () -> Unit) 
             }
         }
         if (canDelete) {
-            TextButton(onClick = onDelete) { Text("Delete", style = V3Type.chip, color = c.error) }
+            TextButton(onClick = onOpen) { Text("Delete", style = V3Type.chip, color = c.error) }
         }
     }
 }
@@ -792,7 +803,7 @@ private fun JellyfinCard(snap: StorageSnapshot) {
 }
 
 @Composable
-private fun InfoCard(title: String, body: String, tint: androidx.compose.ui.graphics.Color) {
+internal fun InfoCard(title: String, body: String, tint: androidx.compose.ui.graphics.Color) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -807,7 +818,7 @@ private fun InfoCard(title: String, body: String, tint: androidx.compose.ui.grap
 }
 
 @Composable
-private fun WatchedChip() {
+internal fun WatchedChip() {
     val c = v3
     Row(
         Modifier
@@ -842,7 +853,7 @@ private fun JfProgress(watched: Boolean, position: Double, runtime: Double) {
 }
 
 @Composable
-private fun checkboxColors() = CheckboxDefaults.colors(
+internal fun checkboxColors() = CheckboxDefaults.colors(
     checkedColor = v3.accent,
     uncheckedColor = v3.textTertiary,
     checkmarkColor = androidx.compose.ui.graphics.Color.White,
@@ -880,7 +891,7 @@ private sealed interface BrowseRow {
 
 // ---------------------------------------------------------------- formatting
 
-private fun fmtBytes(bytes: Long): String {
+internal fun fmtBytes(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
     var value = bytes.toDouble()
