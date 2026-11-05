@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -151,7 +152,9 @@ fun V3DetailScreen(
     var langTarget by remember { mutableStateOf<Episode?>(null) }
     // Owned here, above the dialogs, so opening the subtitle picker cannot
     // rebuild the episode list and drop the user back at the top.
-    val listState = rememberLazyListState()
+    // Saveable: the list keeps its position even when the screen is rebuilt
+    // (a refresh, a rotating device, or a trip to another tab and back).
+    val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     // Title-level subtitle wizard: season → episodes → languages, so a batch is
     // one press at the top of the screen instead of one visit per episode.
     var subsWizard by remember { mutableStateOf(false) }
@@ -237,6 +240,31 @@ fun V3DetailScreen(
                         verticalArrangement = Arrangement.spacedBy(V3Space.lg),
                     ) {
                         item(key = "hero") { V3DetailHero(sharedState, s, episodes, doneCount) }
+
+                        // The title's own subtitle entry: inside the screen, above
+                        // the episodes, never tucked into the top bar.
+                        if (episodes.isNotEmpty()) {
+                            item(key = "subs-title") {
+                                Box(Modifier.padding(horizontal = V3Space.gutter)) {
+                                    OutlinedButton(
+                                        onClick = { subsWizard = true },
+                                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                                        shape = RoundedCornerShape(V3Radius.sm),
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Subtitles,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(V3Space.sm))
+                                        Text(
+                                            if (s.type == "movie") "Download subtitles" else "Download subtitles for this title",
+                                            style = V3Type.chip,
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         if (busy != null) {
                             item(key = "busy") {
@@ -425,34 +453,6 @@ fun V3DetailScreen(
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = v3.text)
             }
             Spacer(Modifier.weight(1f))
-            if (episodes.isNotEmpty()) {
-                // Sits at the top of the series/movie screen, next to the fetch
-                // icon, so subtitles are never something you find per episode.
-                androidx.compose.material3.Surface(
-                    onClick = { subsWizard = true },
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color.Black.copy(alpha = 0.55f),
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            Icons.Rounded.Subtitles,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(
-                            "Subtitles",
-                            style = V3Type.caption12,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
         }
     }
 
