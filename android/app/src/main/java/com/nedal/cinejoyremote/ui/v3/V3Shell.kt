@@ -430,8 +430,31 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 V3DetailScreen(
                     devicesVm, vm, fetchVm, id, snackbar,
                     onBack = { nav.popBackStack() },
+                    onOpenBatch = { s -> nav.navigate("batch/${Uri.encode(id)}/$s") },
                     onOpenFetch = {
                         nav.navigate("fetch") {
+                            popUpTo("library") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
+            // Multi-episode download wizard, reached from the season button: it
+            // picks episodes, source and quality, then queues them in one go.
+            composable("batch/{showId}/{season}") { entry ->
+                val id = Uri.decode(entry.arguments?.getString("showId") ?: "")
+                val season = entry.arguments?.getString("season")?.toIntOrNull() ?: 0
+                val vm: ShowDetailViewModel = viewModel(factory = factory)
+                V3BatchScreen(
+                    vm = vm,
+                    fetchVm = fetchVm,
+                    showId = id,
+                    startSeason = season,
+                    snackbar = snackbar,
+                    onBack = { nav.popBackStack() },
+                    onOpenDownloads = {
+                        nav.navigate("downloads") {
                             popUpTo("library") { saveState = true }
                             launchSingleTop = true
                             restoreState = true

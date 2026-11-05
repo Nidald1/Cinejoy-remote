@@ -130,6 +130,7 @@ fun V3DetailScreen(
     snackbar: SnackbarHostState,
     onBack: () -> Unit,
     onOpenFetch: () -> Unit = {},
+    onOpenBatch: (Int) -> Unit = {},
 ) {
     LaunchedEffect(showId) { vm.load(showId) }
 
@@ -319,12 +320,12 @@ fun V3DetailScreen(
                                     }
                                     if (done < eps.size) {
                                         Text(
-                                            "Queue season",
+                                            "Download season…",
                                             style = V3Type.caption12,
                                             color = v3.activeText,
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .clickable { vm.queueSeason(chosenSeason) }
+                                                .clickable { onOpenBatch(chosenSeason) }
                                                 .padding(horizontal = 6.dp, vertical = 4.dp),
                                         )
                                     }

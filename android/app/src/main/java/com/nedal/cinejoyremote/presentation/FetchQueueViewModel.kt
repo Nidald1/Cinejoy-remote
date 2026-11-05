@@ -229,6 +229,36 @@ class FetchQueueViewModel(
         }
     }
 
+    /**
+     * Queue a batch the wizard already resolved: one `start-download` per
+     * episode with its own source/quality/server choice. Sequential on purpose —
+     * one bad link fails that episode, not the whole batch.
+     */
+    fun startMany(items: List<Pair<String, Map<String, String>>>) = viewModelScope.launch {
+        val d = devicesVm.selectedDeviceId.value
+        if (d == null) {
+            _error.value = "No PC selected"
+            return@launch
+        }
+        var queued = 0
+        var firstError: String? = null
+        for ((key, opts) in items) {
+            _busyKey.value = key
+            val r = mirror.sendCommandForResult(
+                d, "start-download", opts + mapOf("key" to key), timeoutMs = 45_000,
+            )
+            if (r.isSuccess) {
+                queued++
+                _jobs.update { list -> list.map { if (it.key == key) it.copy(queued = true) else it } }
+            } else if (firstError == null) {
+                firstError = r.exceptionOrNull()?.message
+            }
+        }
+        _busyKey.value = null
+        if (firstError != null) _error.value = firstError
+        if (queued > 0) _notice.value = "Queued $queued episode${if (queued == 1) "" else "s"} on the PC"
+    }
+
     fun openShow(key: String): String? = _jobs.value.find { it.key == key }?.showId
 
     // ---------------------------------------------------------------- speed tests
