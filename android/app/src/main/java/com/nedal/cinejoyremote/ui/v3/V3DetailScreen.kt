@@ -539,9 +539,10 @@ private fun V3SubtitleLangReadyDialog(
     var scope by remember(state.key) { mutableStateOf("all") }
     val rows = if (scope == "all") state.languages else state.bySource[scope].orEmpty()
     var selected by remember(state.key, scope) { mutableStateOf(defaultSubtitleLangs(rows)) }
-    // Off by default: this episode only. On: every episode of the season gets
-    // the same languages, swept on the PC in the background.
-    var wholeSeason by remember(state.key) { mutableStateOf(false) }
+    // Which episodes this press covers: the one being opened by default. Tick
+    // any others (or All) and the PC sweeps them in the background, so a whole
+    // batch is one press instead of one visit per episode.
+    var picked by remember(state.key) { mutableStateOf(setOf(state.key)) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.sheet,
@@ -577,24 +578,42 @@ private fun V3SubtitleLangReadyDialog(
                 }
                 if (seasonTargets.size > 1) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(V3Space.xs),
+                        Modifier.fillMaxWidth().padding(top = V3Space.sm),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Apply to", style = V3Type.caption12, color = c.textTertiary)
-                        TextButton(onClick = { wholeSeason = false }) {
-                            Text(
-                                "This episode",
-                                style = V3Type.caption12,
-                                color = if (wholeSeason) c.textSecondary else c.activeText,
-                                fontWeight = if (wholeSeason) FontWeight.Normal else FontWeight.Bold,
-                            )
+                        Text(
+                            "Episodes (${picked.size} of ${seasonTargets.size})",
+                            style = V3Type.chip,
+                            color = c.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { picked = seasonTargets.map { it.key }.toSet() }) {
+                            Text("All", style = V3Type.caption12, color = c.textSecondary)
                         }
-                        TextButton(onClick = { wholeSeason = true }) {
+                        TextButton(onClick = { picked = setOf(state.key) }) {
+                            Text("Just this", style = V3Type.caption12, color = c.textSecondary)
+                        }
+                    }
+                    seasonTargets.forEach { ep ->
+                        val on = ep.key in picked
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { picked = if (on) picked - ep.key else picked + ep.key },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = on,
+                                onCheckedChange = { tick ->
+                                    picked = if (tick) picked + ep.key else picked - ep.key
+                                },
+                            )
                             Text(
-                                "All ${seasonTargets.size} in season",
-                                style = V3Type.caption12,
-                                color = if (wholeSeason) c.activeText else c.textSecondary,
-                                fontWeight = if (wholeSeason) FontWeight.Bold else FontWeight.Normal,
+                                "E${ep.episode}" + (if (ep.name.isBlank()) "" else " · ${ep.name}"),
+                                style = V3Type.caption,
+                                color = c.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -652,16 +671,16 @@ private fun V3SubtitleLangReadyDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = selected.isNotEmpty(),
+                enabled = selected.isNotEmpty() && picked.isNotEmpty(),
                 onClick = {
-                    val keys = if (wholeSeason) seasonTargets.map { it.key } else listOf(state.key)
+                    val keys = seasonTargets.map { it.key }.filter { it in picked }.ifEmpty { listOf(state.key) }
                     onDownload(keys, selected.toList(), subtitleSourcesFor(scope))
                 },
             ) {
                 Text(
                     when {
                         selected.isEmpty() -> "Download"
-                        wholeSeason -> "Download (${selected.size} × ${seasonTargets.size})"
+                        picked.size > 1 -> "Download (${selected.size} langs · ${picked.size} eps)"
                         else -> "Download (${selected.size})"
                     },
                     color = if (selected.isEmpty()) c.textTertiary else c.activeText,
