@@ -472,25 +472,49 @@ class ShowDetailViewModel(
 
     // Only the languages ticked in the picker are downloaded, and only from the
     // subtitle source(s) chosen there (Cinejoy, Atlantic, or both).
-    fun downloadSubtitles(key: String, langs: List<String>, sources: List<String> = SUBTITLE_SOURCES) = viewModelScope.launch {
+    fun downloadSubtitles(key: String, langs: List<String>, sources: List<String> = SUBTITLE_SOURCES) =
+        downloadSubtitles(listOf(key), langs, sources)
+
+    // Several episodes at once (a whole season): the PC runs the sweep in the
+    // background and reports once through the Activity tab, so this never holds
+    // the app's command channel for the minutes a season takes.
+    fun downloadSubtitles(keys: List<String>, langs: List<String>, sources: List<String> = SUBTITLE_SOURCES) = viewModelScope.launch {
         val d = devicesVm.selectedDeviceId.value ?: return@launch
+        val targets = keys.filter { it.isNotBlank() }.distinct()
+        if (targets.isEmpty()) return@launch
         val picked = langs.ifEmpty { listOf("ar", "en") }
         val scope = sources.ifEmpty { SUBTITLE_SOURCES }
-        val r = ServiceLocator.sendCommand(
-            d,
-            "subs-download",
-            mapOf(
-                "key" to key,
-                "langs" to picked.joinToString(","),
-                "sources" to scope.joinToString(","),
-            ),
-        )
+        val r = if (targets.size == 1) {
+            ServiceLocator.sendCommand(
+                d,
+                "subs-download",
+                mapOf(
+                    "key" to targets.first(),
+                    "langs" to picked.joinToString(","),
+                    "sources" to scope.joinToString(","),
+                ),
+            )
+        } else {
+            ServiceLocator.sendCommand(
+                d,
+                "subs-download-many",
+                mapOf(
+                    "keys" to targets.joinToString("\n"),
+                    "langs" to picked.joinToString(","),
+                    "sources" to scope.joinToString(","),
+                ),
+            )
+        }
         val err = r.exceptionOrNull()
         if (err != null) {
             _error.value = err.message
         } else {
             val from = if (scope.size > 1) "Cinejoy + Atlantic" else subtitleSourceLabel(scope.first())
-            _notice.value = "Downloading ${picked.joinToString(", ")} from $from — you'll get an Activity alert when it's done"
+            _notice.value = if (targets.size == 1) {
+                "Downloading ${picked.joinToString(", ")} from $from — you'll get an Activity alert when it's done"
+            } else {
+                "Downloading ${picked.joinToString(", ")} from $from for ${targets.size} episodes — you'll get an Activity alert when it's done"
+            }
         }
         _subLangs.value = SubtitleLangState.Idle
     }

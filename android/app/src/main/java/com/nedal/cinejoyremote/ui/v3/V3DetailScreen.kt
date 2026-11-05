@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -148,6 +149,9 @@ fun V3DetailScreen(
     var linkTarget by remember { mutableStateOf<Episode?>(null) }
     // Episode whose subtitle-language picker is open.
     var langTarget by remember { mutableStateOf<Episode?>(null) }
+    // Owned here, above the dialogs, so opening the subtitle picker cannot
+    // rebuild the episode list and drop the user back at the top.
+    val listState = rememberLazyListState()
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -224,6 +228,7 @@ fun V3DetailScreen(
 
                 Box(Modifier.fillMaxSize()) {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 140.dp),
                         verticalArrangement = Arrangement.spacedBy(V3Space.lg),
@@ -456,11 +461,26 @@ fun V3DetailScreen(
     }
 
     // Pick the languages to download (same rows/counts as the desktop modal).
-    if (langTarget != null) {
+    // The header names the episode/movie, and the scope can cover its whole
+    // season so a multi-episode sweep is one press instead of one visit each.
+    langTarget?.let { target ->
+        val seasonEps = if (show?.type == "movie") {
+            listOf(target)
+        } else {
+            episodes
+                .filter { it.season == target.season }
+                .sortedBy { it.episode }
+                .ifEmpty { listOf(target) }
+        }
         V3SubtitleLangDialog(
             state = subLangsState,
+            targetLabel = subtitleTargetLabel(show, target),
+            seasonTargets = seasonEps,
             onDismiss = { langTarget = null; vm.clearSubtitleLanguages() },
-            onDownload = { key, langs, sources -> langTarget = null; vm.downloadSubtitles(key, langs, sources) },
+            onDownload = { keys, langs, sources ->
+                langTarget = null
+                vm.downloadSubtitles(keys, langs, sources)
+            },
         )
     }
 
@@ -479,8 +499,10 @@ fun V3DetailScreen(
 @Composable
 private fun V3SubtitleLangDialog(
     state: SubtitleLangState,
+    targetLabel: String,
+    seasonTargets: List<Episode>,
     onDismiss: () -> Unit,
-    onDownload: (String, List<String>, List<String>) -> Unit,
+    onDownload: (List<String>, List<String>, List<String>) -> Unit,
 ) {
     val c = v3
     when (state) {
@@ -489,25 +511,27 @@ private fun V3SubtitleLangDialog(
             onDismissRequest = onDismiss,
             containerColor = c.sheet,
             title = { Text("Download subtitles", color = c.text) },
-            text = { Text("Asking the PC which languages it can find for this episode…", color = c.textSecondary) },
+            text = { subtitleDialogBody(targetLabel, "Asking the PC which languages it can find…") },
             confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
         )
         is SubtitleLangState.Failed -> AlertDialog(
             onDismissRequest = onDismiss,
             containerColor = c.sheet,
             title = { Text("Download subtitles", color = c.text) },
-            text = { Text(state.message, color = c.textSecondary) },
+            text = { subtitleDialogBody(targetLabel, state.message) },
             confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = c.activeText) } },
         )
-        is SubtitleLangState.Ready -> V3SubtitleLangReadyDialog(state, onDismiss, onDownload)
+        is SubtitleLangState.Ready -> V3SubtitleLangReadyDialog(state, targetLabel, seasonTargets, onDismiss, onDownload)
     }
 }
 
 @Composable
 private fun V3SubtitleLangReadyDialog(
     state: SubtitleLangState.Ready,
+    targetLabel: String,
+    seasonTargets: List<Episode>,
     onDismiss: () -> Unit,
-    onDownload: (String, List<String>, List<String>) -> Unit,
+    onDownload: (List<String>, List<String>, List<String>) -> Unit,
 ) {
     val c = v3
     // Subtitle source scope: both by default, so one press takes everything the
@@ -515,6 +539,9 @@ private fun V3SubtitleLangReadyDialog(
     var scope by remember(state.key) { mutableStateOf("all") }
     val rows = if (scope == "all") state.languages else state.bySource[scope].orEmpty()
     var selected by remember(state.key, scope) { mutableStateOf(defaultSubtitleLangs(rows)) }
+    // Off by default: this episode only. On: every episode of the season gets
+    // the same languages, swept on the PC in the background.
+    var wholeSeason by remember(state.key) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.sheet,
@@ -525,6 +552,7 @@ private fun V3SubtitleLangReadyDialog(
                 verticalArrangement = Arrangement.spacedBy(V3Space.xs),
             ) {
                 val shownTotal = rows.sumOf { it.count }
+                Text(targetLabel, style = V3Type.chip, color = c.activeText)
                 Text(
                     if (rows.isEmpty()) {
                         "No subtitles for this episode on ${subtitleSourceLabel(scope)}."
@@ -543,6 +571,30 @@ private fun V3SubtitleLangReadyDialog(
                                 style = V3Type.caption12,
                                 color = if (scope == option) c.activeText else c.textSecondary,
                                 fontWeight = if (scope == option) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+                if (seasonTargets.size > 1) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(V3Space.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Apply to", style = V3Type.caption12, color = c.textTertiary)
+                        TextButton(onClick = { wholeSeason = false }) {
+                            Text(
+                                "This episode",
+                                style = V3Type.caption12,
+                                color = if (wholeSeason) c.textSecondary else c.activeText,
+                                fontWeight = if (wholeSeason) FontWeight.Normal else FontWeight.Bold,
+                            )
+                        }
+                        TextButton(onClick = { wholeSeason = true }) {
+                            Text(
+                                "All ${seasonTargets.size} in season",
+                                style = V3Type.caption12,
+                                color = if (wholeSeason) c.activeText else c.textSecondary,
+                                fontWeight = if (wholeSeason) FontWeight.Bold else FontWeight.Normal,
                             )
                         }
                     }
@@ -601,16 +653,41 @@ private fun V3SubtitleLangReadyDialog(
         confirmButton = {
             TextButton(
                 enabled = selected.isNotEmpty(),
-                onClick = { onDownload(state.key, selected.toList(), subtitleSourcesFor(scope)) },
+                onClick = {
+                    val keys = if (wholeSeason) seasonTargets.map { it.key } else listOf(state.key)
+                    onDownload(keys, selected.toList(), subtitleSourcesFor(scope))
+                },
             ) {
                 Text(
-                    if (selected.isEmpty()) "Download" else "Download (${selected.size})",
+                    when {
+                        selected.isEmpty() -> "Download"
+                        wholeSeason -> "Download (${selected.size} × ${seasonTargets.size})"
+                        else -> "Download (${selected.size})"
+                    },
                     color = if (selected.isEmpty()) c.textTertiary else c.activeText,
                 )
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
     )
+}
+
+// The picker says what it acts on: "Silo · S01E06 · Name", or the movie title.
+private fun subtitleTargetLabel(show: LibraryShow?, ep: Episode): String {
+    val parts = buildList {
+        show?.title?.takeIf { it.isNotBlank() }?.let { add(it) }
+        if (show?.type != "movie") add(String.format(java.util.Locale.US, "S%02dE%02d", ep.season, ep.episode))
+        ep.name.takeIf { it.isNotBlank() }?.let { add(it) }
+    }
+    return parts.joinToString(" · ")
+}
+
+@Composable
+private fun subtitleDialogBody(label: String, message: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+        Text(label, style = V3Type.chip, color = v3.activeText)
+        Text(message, style = V3Type.caption, color = v3.textSecondary)
+    }
 }
 
 // ---------------------------------------------------------------- link subtitles
