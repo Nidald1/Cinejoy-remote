@@ -51,6 +51,9 @@ import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.presentation.FetchJob
 import com.nedal.cinejoyremote.presentation.FetchQueueViewModel
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
+import com.nedal.cinejoyremote.presentation.SubtitleLang
+import com.nedal.cinejoyremote.presentation.SubtitleLangState
+import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
 import com.nedal.cinejoyremote.ui.v3.components.V3Divider
 import com.nedal.cinejoyremote.ui.v3.components.V3Pill
 
@@ -89,6 +92,7 @@ fun V3BatchScreen(
     val error by fetchVm.error.collectAsState()
     val notice by fetchVm.notice.collectAsState()
     val busyKey by fetchVm.busyKey.collectAsState()
+    val subLangsState by vm.subLangs.collectAsState()
 
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); fetchVm.clearError() } }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); fetchVm.clearNotice() } }
@@ -100,6 +104,12 @@ fun V3BatchScreen(
     var chosenCsv by rememberSaveable { mutableStateOf("") }
     var queuedCount by rememberSaveable { mutableIntStateOf(0) }
     var expandedCsv by rememberSaveable { mutableStateOf("") }
+    // Subtitle half of the flow: one language choice for the whole batch.
+    var subsOn by rememberSaveable { mutableStateOf(true) }
+    var subsCsv by rememberSaveable { mutableStateOf("ar,en") }
+    var subsScope by rememberSaveable { mutableStateOf("all") }
+    var subsSummary by rememberSaveable { mutableStateOf("") }
+    var pendingItems by remember { mutableStateOf<List<Pair<String, Map<String, String>>>>(emptyList()) }
 
     val picked = remember(pickedCsv) { pickedCsv.split('\n').filter { it.isNotBlank() }.toSet() }
     val chosen = remember(chosenCsv) {
@@ -108,6 +118,7 @@ fun V3BatchScreen(
         }
     }
     val expanded = remember(expandedCsv) { expandedCsv.split('\n').filter { it.isNotBlank() }.toSet() }
+    val subsPicked = remember(subsCsv) { subsCsv.split(',').filter { it.isNotBlank() }.toSet() }
 
     fun setPicked(next: Set<String>) { pickedCsv = next.joinToString("\n") }
     fun setChoice(key: String, offerId: String) {
@@ -163,12 +174,27 @@ fun V3BatchScreen(
     val orderedPicked = seasonEps.map { it.key }.filter { it in picked } +
         picked.filter { key -> seasonEps.none { it.key == key } }
 
+    // Subtitle rows describe the first selected episode; every ticked episode is
+    // swept with the same language codes, each with its own lookup and files.
+    val subReady = subLangsState as? SubtitleLangState.Ready
+    val subRows = if (subsScope == "all") subReady?.languages.orEmpty() else subReady?.bySource?.get(subsScope).orEmpty()
+    val subFirstKey = orderedPicked.firstOrNull()
+    LaunchedEffect(step, subFirstKey) {
+        if (step == 4 && subFirstKey != null) vm.loadSubtitleLanguages(subFirstKey)
+    }
+    LaunchedEffect(subReady, step) {
+        if (step != 4) return@LaunchedEffect
+        if (subsCsv.isBlank() && subReady != null && subReady.languages.isNotEmpty()) {
+            subsCsv = defaultSubtitleLangs(subReady.languages).joinToString(",")
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(c.background)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = V3Space.xs, vertical = V3Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { if (step in 2..3) step -= 1 else onBack() }) {
+            IconButton(onClick = { if (step in 2..4) step -= 1 else onBack() }) {
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = c.text)
             }
             Column(Modifier.weight(1f)) {
@@ -181,9 +207,10 @@ fun V3BatchScreen(
                 )
                 Text(
                     when (step) {
-                        1 -> "Step 1 of 3 · Choose episodes"
-                        2 -> "Step 2 of 3 · Choose source"
-                        3 -> "Step 3 of 3 · Pick quality and download"
+                        1 -> "Step 1 of 4 · Choose episodes"
+                        2 -> "Step 2 of 4 · Choose source"
+                        3 -> "Step 3 of 4 · Pick quality"
+                        4 -> "Step 4 of 4 · Subtitles"
                         else -> "Queued on the PC"
                     },
                     style = V3Type.caption,
@@ -245,15 +272,43 @@ fun V3BatchScreen(
                     readyCount = readyCount,
                     busyKey = busyKey,
                     onDownload = { items ->
-                        fetchVm.startMany(items)
-                        queuedCount = items.size
+                        pendingItems = items
                         step = 4
                     },
                 )
             }
 
+            4 -> StepSubtitles(
+                count = pendingItems.size,
+                state = subLangsState,
+                rows = subRows,
+                subsOn = subsOn,
+                onSubsOn = { subsOn = it },
+                picked = subsPicked,
+                onToggle = { code ->
+                    subsCsv = (if (code in subsPicked) subsPicked - code else subsPicked + code).joinToString(",")
+                },
+                onAll = { subsCsv = subRows.map { it.code }.joinToString(",") },
+                onNone = { subsCsv = "" },
+                scope = subsScope,
+                onScope = { subsScope = it },
+                onDownload = {
+                    val keys = pendingItems.map { it.first }
+                    fetchVm.startMany(pendingItems)
+                    if (subsOn && subsPicked.isNotEmpty()) {
+                        vm.downloadSubtitles(keys, subsPicked.toList(), batchSubtitleSources(subsScope))
+                        subsSummary = subsPicked.joinToString(", ") { it.uppercase() }
+                    } else {
+                        subsSummary = ""
+                    }
+                    queuedCount = pendingItems.size
+                    step = 5
+                },
+            )
+
             else -> StepDone(
                 count = queuedCount,
+                subs = subsSummary,
                 onDownloads = onOpenDownloads,
                 onBack = onBack,
             )
@@ -520,7 +575,7 @@ private fun StepLinks(
         FooterButton(
             label = when {
                 items.isEmpty() -> "Pick a quality for at least one episode"
-                else -> "Download ${items.size} episode${if (items.size == 1) "" else "s"}"
+                else -> "Next — subtitles (${items.size})"
             },
             enabled = items.isNotEmpty(),
             onClick = { onDownload(items) },
@@ -613,7 +668,7 @@ private fun EpisodeOffers(
 }
 
 @Composable
-private fun StepDone(count: Int, onDownloads: () -> Unit, onBack: () -> Unit) {
+private fun StepDone(count: Int, subs: String, onDownloads: () -> Unit, onBack: () -> Unit) {
     val c = v3
     Column(
         Modifier.fillMaxSize().padding(V3Space.gutter),
@@ -634,6 +689,15 @@ private fun StepDone(count: Int, onDownloads: () -> Unit, onBack: () -> Unit) {
             color = c.textSecondary,
             modifier = Modifier.padding(top = V3Space.sm),
         )
+        if (subs.isNotBlank()) {
+            Text(
+                "Subtitles ($subs) are swept in the background for these same episodes — " +
+                    "the Activity tab reports when they finish and they are published next to every video.",
+                style = V3Type.caption,
+                color = c.success,
+                modifier = Modifier.padding(top = V3Space.sm),
+            )
+        }
         Spacer(Modifier.height(V3Space.lg))
         Button(onClick = onDownloads, shape = RoundedCornerShape(V3Radius.sm), modifier = Modifier.fillMaxWidth().height(44.dp)) {
             Icon(Icons.Rounded.Download, null, modifier = Modifier.size(18.dp))
@@ -645,6 +709,128 @@ private fun StepDone(count: Int, onDownloads: () -> Unit, onBack: () -> Unit) {
             Text("Back to the title", style = V3Type.chip)
         }
     }
+}
+
+// The subtitle half of the wizard: one language choice for the batch, then the
+// PC sweeps each episode with its own lookup and publishes beside every video.
+@Composable
+private fun StepSubtitles(
+    count: Int,
+    state: SubtitleLangState,
+    rows: List<SubtitleLang>,
+    subsOn: Boolean,
+    onSubsOn: (Boolean) -> Unit,
+    picked: Set<String>,
+    onToggle: (String) -> Unit,
+    onAll: () -> Unit,
+    onNone: () -> Unit,
+    scope: String,
+    onScope: (String) -> Unit,
+    onDownload: () -> Unit,
+) {
+    val c = v3
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.weight(1f).padding(horizontal = V3Space.gutter)) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = V3Space.sm).clickable { onSubsOn(!subsOn) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = subsOn, onCheckedChange = null)
+                    Column(Modifier.weight(1f)) {
+                        Text("Also download subtitles", style = V3Type.itemTitle, color = c.text)
+                        Text(
+                            "For these same ${count} episode${if (count == 1) "" else "s"}, queued together with the videos.",
+                            style = V3Type.caption12,
+                            color = c.textTertiary,
+                        )
+                    }
+                }
+            }
+            if (subsOn) {
+                item {
+                    Text(
+                        "Every episode downloads its own subtitles. Counts below are for the first " +
+                            "selected episode; the PC reports each episode separately.",
+                        style = V3Type.caption12,
+                        color = c.textTertiary,
+                        modifier = Modifier.padding(vertical = V3Space.sm),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(V3Space.sm)) {
+                        listOf("all" to "Both", "cinejoy" to "Cinejoy", "atlantic" to "Atlantic").forEach { (key, label) ->
+                            V3Pill(label = label, selected = scope == key, onClick = { onScope(key) })
+                        }
+                    }
+                    when (state) {
+                        is SubtitleLangState.Loading -> Text(
+                            "Asking the PC which subtitles exist…",
+                            style = V3Type.caption,
+                            color = c.textSecondary,
+                            modifier = Modifier.padding(top = V3Space.sm),
+                        )
+                        is SubtitleLangState.Failed -> Text(
+                            state.message,
+                            style = V3Type.caption,
+                            color = c.error,
+                            modifier = Modifier.padding(top = V3Space.sm),
+                        )
+                        else -> {
+                            if (rows.isEmpty()) {
+                                Text(
+                                    "No subtitles found for this episode on ${if (scope == "cinejoy") "Cinejoy" else if (scope == "atlantic") "Atlantic" else "Cinejoy or Atlantic"}.",
+                                    style = V3Type.caption,
+                                    color = c.textTertiary,
+                                    modifier = Modifier.padding(top = V3Space.sm),
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                                TextButton(onClick = onAll) { Text("All", style = V3Type.caption, color = c.activeText) }
+                                TextButton(onClick = onNone) { Text("None", style = V3Type.caption, color = c.textSecondary) }
+                            }
+                        }
+                    }
+                }
+                items(rows, key = { it.code }) { lang ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onToggle(lang.code) }.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = lang.code in picked, onCheckedChange = null)
+                        Text(
+                            if (lang.name.isBlank()) lang.code else lang.name,
+                            style = V3Type.body14,
+                            color = c.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            listOfNotNull(
+                                "${lang.count} available".takeIf { lang.count > 0 },
+                                "${lang.existing} downloaded".takeIf { lang.existing > 0 },
+                            ).joinToString(" · ").ifBlank { "none yet" },
+                            style = V3Type.caption12,
+                            color = c.textTertiary,
+                        )
+                    }
+                }
+            }
+        }
+        FooterButton(
+            label = when {
+                !subsOn -> "Download $count episode${if (count == 1) "" else "s"}"
+                picked.isEmpty() -> "Pick at least one subtitle language"
+                else -> "Download $count episode${if (count == 1) "" else "s"} + subtitles"
+            },
+            enabled = !subsOn || picked.isNotEmpty(),
+            onClick = onDownload,
+        )
+    }
+}
+
+// "all" means both subtitle providers, the same scope the title picker sends.
+private fun batchSubtitleSources(scope: String): List<String> = when (scope) {
+    "cinejoy" -> listOf("cinejoy")
+    "atlantic" -> listOf("atlantic")
+    else -> listOf("cinejoy", "atlantic")
 }
 
 @Composable
