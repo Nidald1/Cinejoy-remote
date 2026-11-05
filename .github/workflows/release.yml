@@ -23,6 +23,10 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags must be present so the notes step can diff against the last
+          # release.
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -68,12 +72,35 @@ jobs:
           cp "$apk" "$RUNNER_TEMP/dist/CineDownloader-$ver.apk"
           ls -la "$RUNNER_TEMP/dist"
 
+      - name: Write the "What's new" notes
+        # The app shows the release body as "What's new" in its update popup and
+        # Settings, so build it from the commit subjects since the last tag
+        # instead of GitHub's compare-link default.
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "## What's new in ${GITHUB_REF_NAME#v}"
+            echo
+            if [ -n "$prev" ]; then
+              git log --no-merges --pretty=format:'- %s' "$prev..$GITHUB_REF_NAME"
+            else
+              git log --no-merges --pretty=format:'- %s' -20
+            fi
+            echo
+          } > "$RUNNER_TEMP/notes.md"
+          # Also ship the notes as an asset: the app's rate-limit fallback reads
+          # it straight from the release instead of the API's body field.
+          cp "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/dist/whatsnew.md"
+          cat "$RUNNER_TEMP/notes.md"
+
       - name: Attach APK to GitHub Release
         # NOTE: `uses:` steps ignore defaults.run.working-directory, so this
         # path is repo-root-relative (unlike the `run:` steps above).
         uses: softprops/action-gh-release@v2
         with:
           name: Cine Downloader ${{ github.ref_name }}
-          files: ${{ runner.temp }}/dist/CineDownloader-*.apk
+          files: |
+            ${{ runner.temp }}/dist/CineDownloader-*.apk
+            ${{ runner.temp }}/dist/whatsnew.md
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/notes.md

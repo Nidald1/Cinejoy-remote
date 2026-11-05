@@ -193,7 +193,14 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
     val updateVm: UpdateViewModel = viewModel()
     val updateState by updateVm.state.collectAsState()
     val updatePopup by updateVm.popupVisible.collectAsState()
-    LaunchedEffect(Unit) { updateVm.autoCheck(context) }
+    // A release published while the app is open must show up without a manual
+    // check, so poll in the background instead of checking only at launch.
+    LaunchedEffect(Unit) {
+        while (true) {
+            updateVm.autoCheck(context)
+            kotlinx.coroutines.delay(5 * 60 * 1000L)
+        }
+    }
 
     // Back: detail/search/share -> pop; root tab -> library; library -> the
     // "press back again to exit" guard. (Seerr adds its own WebView back

@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -53,6 +54,16 @@ import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 
+// The release body is markdown ("## What's new", "- commit subject"); the card
+// already has that heading, so keep just the readable lines.
+private fun notesPlain(raw: String): String = raw.lines()
+    .map { it.trim() }
+    .filter { it.isNotBlank() && !it.startsWith("#") && !it.startsWith("**") }
+    .map { it.removePrefix("- ").removePrefix("* ").trim() }
+    .filter { it.isNotEmpty() }
+    .joinToString("\n")
+    .take(800)
+
 /**
  * V3 Settings (spec mockup 10): flat section cards — title left, controls
  * right/below; Appearance / Title page / Library style / Connection / PC
@@ -70,6 +81,10 @@ fun V3SettingsScreen(
     val context = LocalContext.current
     val authState by authVm.authState.collectAsState(initial = AuthState.Loading)
     val updateState by updateVm.state.collectAsState()
+    // Arriving here means the user wants the controls, not the popup: hide it
+    // (without marking the version dismissed) so nothing has to be dismissed
+    // before "Check for updates" can be pressed.
+    LaunchedEffect(Unit) { updateVm.hidePopup() }
 
     val busy by pcTools.busy.collectAsState()
     val logText by pcTools.log.collectAsState()
@@ -275,7 +290,7 @@ fun V3SettingsScreen(
             when (val s = updateState) {
                 is UpdateUiState.Idle, is UpdateUiState.Checking ->
                     Button(
-                        onClick = { updateVm.check(context) },
+                        onClick = { updateVm.checkFromSettings(context) },
                         enabled = s !is UpdateUiState.Checking,
                         shape = RoundedCornerShape(V3Radius.sm),
                     ) {
@@ -284,11 +299,16 @@ fun V3SettingsScreen(
 
                 is UpdateUiState.UpToDate -> {
                     Text("You're on the latest version.", style = V3Type.caption, color = c.success)
-                    TextButton(onClick = updateVm::clear) { Text("dismiss", style = V3Type.caption) }
                 }
 
                 is UpdateUiState.Available -> {
                     Text("Update ${s.info.version} available.", style = V3Type.caption, color = c.warning)
+                    val notes = remember(s.info.notes) { notesPlain(s.info.notes) }
+                    if (notes.isNotEmpty()) {
+                        Spacer(Modifier.height(V3Space.xs))
+                        Text("What's new", style = V3Type.chip, color = c.text)
+                        Text(notes, style = V3Type.caption12, color = c.textSecondary)
+                    }
                     Spacer(Modifier.height(V3Space.xs))
                     Button(onClick = updateVm::showPopup, shape = RoundedCornerShape(V3Radius.sm)) {
                         Text("View update", style = V3Type.chip)

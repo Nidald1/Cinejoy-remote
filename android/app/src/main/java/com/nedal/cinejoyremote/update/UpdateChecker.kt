@@ -60,6 +60,26 @@ fun compareVersions(local: String, remote: String): Int {
 // /releases/latest redirect has no such quota and needs no token, so it backs
 // up the API: its Location header carries the newest tag, and the release
 // workflow names the APK asset CineDownloader-<tag>.apk deterministically.
+// The release workflow also uploads whatsnew.md next to the APK, so the
+// HTML fallback can still show "What's new" without the API's body field.
+// An older release simply has no such asset: "" then, never an error.
+private fun notesViaAsset(owner: String, repo: String, tag: String): String = try {
+    val conn = (URL("https://github.com/$owner/$repo/releases/download/$tag/whatsnew.md")
+        .openConnection() as HttpURLConnection).apply {
+        instanceFollowRedirects = true
+        connectTimeout = 10000
+        readTimeout = 10000
+    }
+    try {
+        if (conn.responseCode != 200) ""
+        else conn.inputStream.bufferedReader().readText().take(4000)
+    } finally {
+        conn.disconnect()
+    }
+} catch (_: Exception) {
+    ""
+}
+
 // Returns the raw tag ("v5.0.148") or null when there is no release.
 private fun latestTagViaHtml(owner: String, repo: String): String? = try {
     val conn = (URL("https://github.com/$owner/$repo/releases/latest").openConnection() as HttpURLConnection).apply {
@@ -107,7 +127,7 @@ suspend fun checkForUpdate(ctx: Context): UpdateResult = withContext(Dispatchers
                 return@withContext UpdateResult.Available(
                     UpdateInfo(
                         version = tag,
-                        notes = "",
+                        notes = notesViaAsset(GITHUB_OWNER, GITHUB_REPO, tag),
                         apkUrl = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/download/$tag/$assetName",
                         assetName = assetName,
                     ),

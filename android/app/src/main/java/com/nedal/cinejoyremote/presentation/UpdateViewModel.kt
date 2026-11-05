@@ -48,18 +48,35 @@ class UpdateViewModel : ViewModel() {
         }
     }
 
-    // Silent launch check: only surfaces the popup when a newer version
-    // exists AND the user hasn't dismissed this exact version before.
+    // Background check: launch, every few minutes while the app is open, and
+    // whenever Android brings it back. A release published while the app is
+    // running must surface on its own, so this never bails out just because a
+    // previous check already ran.
     fun autoCheck(ctx: Context) = viewModelScope.launch {
-        if (_state.value != UpdateUiState.Idle) return@launch
+        val before = _state.value
+        // Never interrupt a download or the install sheet.
+        if (before is UpdateUiState.Downloading || before is UpdateUiState.Ready) return@launch
         when (val r = checkForUpdate(ctx.applicationContext)) {
             is UpdateResult.Available -> {
-                _state.value = UpdateUiState.Available(r.info)
-                if (!wasDismissed(ctx, r.info.version)) _popupVisible.value = true
+                val alreadyShowing = (before as? UpdateUiState.Available)?.info?.version == r.info.version
+                if (!alreadyShowing) _state.value = UpdateUiState.Available(r.info)
+                // Once per version — a dismissed release stays quiet, a newer
+                // one pops up immediately.
+                if (!alreadyShowing && !wasDismissed(ctx, r.info.version)) _popupVisible.value = true
             }
-            is UpdateResult.UpToDate -> _state.value = UpdateUiState.UpToDate
-            else -> { /* silent on launch — Settings shows real errors */ }
+            is UpdateResult.UpToDate -> {
+                // Don't erase an offer the user is already looking at.
+                if (before is UpdateUiState.Idle) _state.value = UpdateUiState.UpToDate
+            }
+            else -> { /* silent — Settings shows real errors */ }
         }
+    }
+
+    // Settings' button: it must not need the popup closed first, so this hides
+    // the popup itself and then reports its result in the row.
+    fun checkFromSettings(ctx: Context) {
+        hidePopup()
+        check(ctx)
     }
 
     fun dismissPopup(ctx: Context, version: String) {
