@@ -1,5 +1,6 @@
 package com.nedal.cinejoyremote.ui.v3
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -117,6 +119,9 @@ fun V3BatchScreen(
     var subsSummary by rememberSaveable { mutableStateOf("") }
     var pendingItems by remember { mutableStateOf<List<Pair<String, Map<String, String>>>>(emptyList()) }
     var pendingKeys by remember { mutableStateOf<List<String>>(emptyList()) }
+    // A stray back press must not throw the whole flow away: closing from the
+    // first step (or after queueing) asks first.
+    var confirmClose by rememberSaveable { mutableStateOf(false) }
 
     val picked = remember(pickedCsv) { pickedCsv.split('\n').filter { it.isNotBlank() }.toSet() }
     val chosen: Map<String, List<String>> = remember(chosenCsv) {
@@ -214,20 +219,25 @@ fun V3BatchScreen(
 
     val editing = editingKey.takeIf { it.isNotBlank() }
 
+    // Back walks one step at a time: an episode's sources -> the episode list
+    // -> the source step -> episodes. Only leaving the wizard entirely asks.
+    fun requestBack() {
+        when {
+            editingKey.isNotBlank() -> editingKey = ""
+            step in 2..4 -> step -= 1
+            else -> confirmClose = true
+        }
+    }
+    // The shell's BackHandler pops the whole route, so the wizard has to claim
+    // the system back button itself. The dialog consumes back while it is up.
+    BackHandler { requestBack() }
+
     Column(Modifier.fillMaxSize().background(c.background)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = V3Space.xs, vertical = V3Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(
-                onClick = {
-                    when {
-                        editing != null -> editingKey = ""
-                        step in 2..4 -> step -= 1
-                        else -> onBack()
-                    }
-                },
-            ) {
+            IconButton(onClick = { requestBack() }) {
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = c.text)
             }
             Column(Modifier.weight(1f)) {
@@ -349,6 +359,31 @@ fun V3BatchScreen(
                 onBack = onBack,
             )
         }
+    }
+
+    if (confirmClose) {
+        AlertDialog(
+            onDismissRequest = { confirmClose = false },
+            title = { Text("Close the download wizard?") },
+            text = {
+                Text(
+                    if (step >= 5) {
+                        "These downloads are already queued on the PC and keep running — " +
+                            "follow them in Downloads."
+                    } else {
+                        "Your episode and source choices are not saved, so they are lost."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmClose = false; onBack() }) {
+                    Text("Close wizard", color = c.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClose = false }) { Text("Keep going") }
+            },
+        )
     }
 }
 
