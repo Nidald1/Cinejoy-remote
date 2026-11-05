@@ -277,6 +277,16 @@ private data class SuggestionTarget(
     val isFolder: Boolean,
 )
 
+private fun fileSummary(files: List<StorageFileEntry>, fallbackCount: Int): String {
+    if (files.isEmpty()) return "$fallbackCount file(s)"
+    val names = files.mapNotNull {
+        it.name.ifBlank { it.path.substringAfterLast('\\') }.takeIf(String::isNotBlank)
+    }
+    if (names.isEmpty()) return "$fallbackCount file(s)"
+    val visible = names.take(2).joinToString(" · ")
+    return if (names.size > 2) "$visible +${names.size - 2} more" else visible
+}
+
 private fun addEpisodeTarget(
     targets: LinkedHashMap<String, SuggestionTarget>,
     show: StorageShow,
@@ -291,7 +301,7 @@ private fun addEpisodeTarget(
             episode.episode,
             episode.name.ifBlank { "Episode ${episode.episode}" },
         ),
-        subtitle = "${show.title} · ${paths.size} file(s)",
+        subtitle = "${show.title} · ${fileSummary(episode.files, paths.size)}",
         paths = paths,
         size = episode.bytes,
         watched = episode.watched,
@@ -346,7 +356,7 @@ private fun buildSuggestionTargets(
                 targets["movie:$path"] = SuggestionTarget(
                     key = "movie:$path",
                     title = movie.title.ifBlank { path.substringAfterLast('\\') },
-                    subtitle = "Movie folder · ${movie.files.size} file(s)",
+                    subtitle = "Movie folder · ${fileSummary(movie.files, movie.deletePaths.size)}",
                     paths = movie.deletePaths.ifEmpty { listOf(path) },
                     size = movie.bytes,
                     watched = movie.watched,

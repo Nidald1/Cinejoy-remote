@@ -240,12 +240,19 @@ private fun StorageContent(
 
             if (snap.suggestions.isNotEmpty()) {
                 item(key = "suggestions-title") {
-                    Text(
-                        "Ways to free up space",
-                        style = V3Type.sectionTitle,
-                        color = v3.text,
-                        modifier = Modifier.padding(horizontal = V3Space.gutter).padding(top = V3Space.md),
-                    )
+                    Column(Modifier.padding(horizontal = V3Space.gutter).padding(top = V3Space.md)) {
+                        Text(
+                            "Ways to free up space",
+                            style = V3Type.sectionTitle,
+                            color = v3.text,
+                        )
+                        Text(
+                            "Tap a suggestion to review its files and choose what to delete.",
+                            style = V3Type.caption,
+                            color = v3.textTertiary,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
                 }
                 items(snap.suggestions, key = { "suggestion:${it.id}" }) { suggestion ->
                     Box(Modifier.padding(horizontal = V3Space.gutter)) {
@@ -558,6 +565,7 @@ private fun SuggestionCard(suggestion: StorageSuggestion, onOpen: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(V3Radius.card))
             .background(c.surface)
+            .clickable(enabled = canDelete, onClick = onOpen)
             .padding(V3Space.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(V3Space.md),
