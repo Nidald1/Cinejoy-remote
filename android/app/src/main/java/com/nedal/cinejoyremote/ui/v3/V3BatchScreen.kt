@@ -158,11 +158,12 @@ fun V3BatchScreen(
         if (picked.isEmpty() && seasonEps.isNotEmpty()) setPicked(seasonEps.map { it.key }.toSet())
     }
 
-    val sourceList = if (sourceChoice == "any") FetchJob.SOURCE_KEYS else listOf(sourceChoice)
+    // Every resolved source is always listed: the step-2 choice only biases the
+    // automatic pick, because one episode may be wanted from several sources.
     fun offersFor(key: String): List<BatchOffer> {
         val job = jobs.firstOrNull { it.key == key } ?: return emptyList()
         return bestFirst(
-            sourceList.flatMap { src -> job.sources[src]?.data?.let { batchOffers(src, it) }.orEmpty() },
+            FetchJob.SOURCE_KEYS.flatMap { src -> job.sources[src]?.data?.let { batchOffers(src, it) }.orEmpty() },
         )
     }
 
@@ -186,7 +187,10 @@ fun V3BatchScreen(
         var changed = false
         for (key in picked) {
             if (!map[key].isNullOrEmpty()) continue
-            val best = offersFor(key).firstOrNull() ?: continue
+            val all = offersFor(key)
+            val best = if (sourceChoice == "any") all.firstOrNull()
+                else all.firstOrNull { it.source == sourceChoice } ?: all.firstOrNull()
+            if (best == null) continue
             map[key] = listOf(best.id)
             changed = true
         }
@@ -456,9 +460,9 @@ private fun StepSource(
                     modifier = Modifier.padding(top = V3Space.sm),
                 )
                 Text(
-                    "Pick where the links should come from. Sources differ, so the next screen lists " +
-                        "each episode's options with real file sizes — open an episode and tick every " +
-                        "source you want it from.",
+                    "Pick your preferred source — it decides what is ticked automatically. Every " +
+                        "episode still lists all sources with real file sizes, and you can tick as many " +
+                        "of them as you want for that episode.",
                     style = V3Type.caption,
                     color = c.textSecondary,
                     modifier = Modifier.padding(top = V3Space.xs, bottom = V3Space.md),
