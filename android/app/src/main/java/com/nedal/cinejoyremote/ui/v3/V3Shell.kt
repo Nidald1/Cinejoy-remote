@@ -449,6 +449,7 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                 V3BatchScreen(
                     vm = vm,
                     fetchVm = fetchVm,
+                    downloadsVm = downloadsVm,
                     showId = id,
                     startSeason = season,
                     snackbar = snackbar,

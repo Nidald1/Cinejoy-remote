@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +26,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
@@ -47,7 +47,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.domain.Episode
+import com.nedal.cinejoyremote.presentation.DownloadsViewModel
 import com.nedal.cinejoyremote.presentation.FetchJob
 import com.nedal.cinejoyremote.presentation.FetchQueueViewModel
 import com.nedal.cinejoyremote.presentation.ShowDetailViewModel
@@ -60,24 +62,27 @@ import com.nedal.cinejoyremote.ui.v3.components.V3Pill
 /**
  * Multi-episode download wizard.
  *
- * The season button used to queue every missing episode with the PC's default
- * source and quality — no way to choose, no sizes, no chance to skip an episode.
- * This screen turns that into three explicit steps:
+ * 1. episodes (checkboxes, All/None, season picker for multi-season titles),
+ * 2. source ("Any" or one of the five the PC can resolve),
+ * 3. one list row per episode; tapping a row opens that episode's own source
+ *    screen, where any number of offers can be ticked (the same episode can be
+ *    downloaded from several sources at once). Back returns to the list, which
+ *    shows what was chosen — source, quality and size — so nothing needs
+ *    scrolling through every offer again,
+ * 4. subtitles for the same batch (languages and provider), then download.
  *
- *  1. which episodes (checkboxes, All/None, season picker for multi-season),
- *  2. which source ("Any" or one of the five the PC can resolve),
- *  3. the links: every episode's qualities with their real file sizes, biggest
- *     first, one choice per episode, then a single batch download.
+ * After queueing it stays on screen as a live progress list: every download
+ * task's state/percent/speed, plus the subtitle sweep note.
  *
- * It reuses the shell-scoped [FetchQueueViewModel]: the same `src-info` lookups
- * the sand-clock screen runs, so all selected episodes resolve at once and the
- * results stay cached. Starting sends the same `start-download` payload the
- * source panes send, one per episode, each with its own source/quality/server.
+ * Data comes from the shell-scoped [FetchQueueViewModel] (same `src-info`
+ * lookups the sand-clock screen runs); starts use the same `start-download`
+ * payload the source panes send, one per ticked offer.
  */
 @Composable
 fun V3BatchScreen(
     vm: ShowDetailViewModel,
     fetchVm: FetchQueueViewModel,
+    downloadsVm: DownloadsViewModel,
     showId: String,
     startSeason: Int,
     snackbar: SnackbarHostState,
@@ -89,9 +94,9 @@ fun V3BatchScreen(
     val show by vm.show.collectAsState()
     val episodes by vm.episodes.collectAsState()
     val jobs by fetchVm.jobs.collectAsState()
+    val tasks by downloadsVm.tasks.collectAsState()
     val error by fetchVm.error.collectAsState()
     val notice by fetchVm.notice.collectAsState()
-    val busyKey by fetchVm.busyKey.collectAsState()
     val subLangsState by vm.subLangs.collectAsState()
 
     LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); fetchVm.clearError() } }
@@ -103,31 +108,42 @@ fun V3BatchScreen(
     var sourceChoice by rememberSaveable { mutableStateOf("any") }
     var chosenCsv by rememberSaveable { mutableStateOf("") }
     var queuedCount by rememberSaveable { mutableIntStateOf(0) }
-    var expandedCsv by rememberSaveable { mutableStateOf("") }
+    // Episode whose own source screen is open (blank = the episode list).
+    var editingKey by rememberSaveable { mutableStateOf("") }
     // Subtitle half of the flow: one language choice for the whole batch.
     var subsOn by rememberSaveable { mutableStateOf(true) }
     var subsCsv by rememberSaveable { mutableStateOf("ar,en") }
     var subsScope by rememberSaveable { mutableStateOf("all") }
     var subsSummary by rememberSaveable { mutableStateOf("") }
     var pendingItems by remember { mutableStateOf<List<Pair<String, Map<String, String>>>>(emptyList()) }
+    var pendingKeys by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val picked = remember(pickedCsv) { pickedCsv.split('\n').filter { it.isNotBlank() }.toSet() }
-    val chosen = remember(chosenCsv) {
+    val chosen: Map<String, List<String>> = remember(chosenCsv) {
         chosenCsv.split('\n').filter { it.contains('\t') }.associate {
-            it.substringBefore('\t') to it.substringAfter('\t')
+            it.substringBefore('\t') to
+                it.substringAfter('\t').split(',').filter { id -> id.isNotBlank() }
         }
     }
-    val expanded = remember(expandedCsv) { expandedCsv.split('\n').filter { it.isNotBlank() }.toSet() }
     val subsPicked = remember(subsCsv) { subsCsv.split(',').filter { it.isNotBlank() }.toSet() }
 
     fun setPicked(next: Set<String>) { pickedCsv = next.joinToString("\n") }
-    fun setChoice(key: String, offerId: String) {
-        val next = chosen.toMutableMap()
-        next[key] = offerId
-        chosenCsv = next.entries.joinToString("\n") { "${it.key}\t${it.value}" }
+    fun writeChosen(next: Map<String, List<String>>) {
+        chosenCsv = next.entries
+            .filter { it.value.isNotEmpty() }
+            .joinToString("\n") { "${it.key}\t${it.value.joinToString(",")}" }
     }
-    fun toggleExpanded(key: String) {
-        expandedCsv = if (key in expanded) (expanded - key).joinToString("\n") else (expanded + key).joinToString("\n")
+    fun toggleChoice(key: String, offerId: String) {
+        val next = chosen.toMutableMap()
+        val ids = next[key].orEmpty().toMutableSet()
+        if (!ids.add(offerId)) ids.remove(offerId)
+        if (ids.isEmpty()) next.remove(key) else next[key] = ids.toList()
+        writeChosen(next)
+    }
+    fun setChoices(key: String, ids: List<String>) {
+        val next = chosen.toMutableMap()
+        if (ids.isEmpty()) next.remove(key) else next[key] = ids
+        writeChosen(next)
     }
 
     val seasons = remember(episodes) { episodes.map { it.season }.distinct().sorted() }
@@ -137,9 +153,7 @@ fun V3BatchScreen(
     val seasonEps = remember(episodes, season) {
         episodes.filter { it.season == season }.sortedBy { it.episode }
     }
-
-    // Opened from a season button: start with that season's episodes ticked, so
-    // the common case is "Next → Next → Download" instead of re-ticking them.
+    // Opened from a season button: start with that season's episodes ticked.
     LaunchedEffect(seasonEps) {
         if (picked.isEmpty() && seasonEps.isNotEmpty()) setPicked(seasonEps.map { it.key }.toSet())
     }
@@ -151,28 +165,33 @@ fun V3BatchScreen(
             sourceList.flatMap { src -> job.sources[src]?.data?.let { batchOffers(src, it) }.orEmpty() },
         )
     }
-    fun offersFor(key: String, source: String): List<BatchOffer> {
-        val job = jobs.firstOrNull { it.key == key } ?: return emptyList()
-        return bestFirst(job.sources[source]?.data?.let { batchOffers(source, it) }.orEmpty())
+
+    val orderedPicked = seasonEps.map { it.key }.filter { it in picked } +
+        picked.filter { key -> seasonEps.none { it.key == key } }
+
+    // Every ticked offer becomes its own download; the same episode from two
+    // sources is two files and the PC queues them separately.
+    val downloadItems = orderedPicked.flatMap { key ->
+        val offers = offersFor(key)
+        chosen[key].orEmpty().mapNotNull { id ->
+            offers.firstOrNull { it.id == id }?.let { key to it.opts }
+        }
     }
 
-    // Default each episode to its best offer as soon as links arrive, so a batch
-    // is fully specified without touching every episode. A manual pick is kept.
+    // Default each episode to its best offer when links arrive. Manual ticks are
+    // kept; an episode with several ticks stays multi-source.
     LaunchedEffect(jobs, sourceChoice, pickedCsv, step) {
         if (step < 3) return@LaunchedEffect
         val map = chosen.toMutableMap()
         var changed = false
         for (key in picked) {
-            if (map[key] != null) continue
+            if (!map[key].isNullOrEmpty()) continue
             val best = offersFor(key).firstOrNull() ?: continue
-            map[key] = best.id
+            map[key] = listOf(best.id)
             changed = true
         }
-        if (changed) chosenCsv = map.entries.joinToString("\n") { "${it.key}\t${it.value}" }
+        if (changed) writeChosen(map)
     }
-
-    val orderedPicked = seasonEps.map { it.key }.filter { it in picked } +
-        picked.filter { key -> seasonEps.none { it.key == key } }
 
     // Subtitle rows describe the first selected episode; every ticked episode is
     // swept with the same language codes, each with its own lookup and files.
@@ -189,29 +208,43 @@ fun V3BatchScreen(
         }
     }
 
+    val editing = editingKey.takeIf { it.isNotBlank() }
+
     Column(Modifier.fillMaxSize().background(c.background)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = V3Space.xs, vertical = V3Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { if (step in 2..4) step -= 1 else onBack() }) {
+            IconButton(
+                onClick = {
+                    when {
+                        editing != null -> editingKey = ""
+                        step in 2..4 -> step -= 1
+                        else -> onBack()
+                    }
+                },
+            ) {
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = c.text)
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    show?.title ?: "Download",
+                    when {
+                        editing != null -> jobs.firstOrNull { it.key == editing }?.subtitle ?: "Choose sources"
+                        else -> show?.title ?: "Download"
+                    },
                     style = V3Type.sectionTitle,
                     color = c.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    when (step) {
-                        1 -> "Step 1 of 4 · Choose episodes"
-                        2 -> "Step 2 of 4 · Choose source"
-                        3 -> "Step 3 of 4 · Pick quality"
-                        4 -> "Step 4 of 4 · Subtitles"
-                        else -> "Queued on the PC"
+                    when {
+                        editing != null -> "Tick every source you want this episode from"
+                        step == 1 -> "Step 1 of 4 · Choose episodes"
+                        step == 2 -> "Step 2 of 4 · Choose source"
+                        step == 3 -> "Step 3 of 4 · Sources per episode"
+                        step == 4 -> "Step 4 of 4 · Subtitles"
+                        else -> "Live progress"
                     },
                     style = V3Type.caption,
                     color = c.textSecondary,
@@ -219,8 +252,19 @@ fun V3BatchScreen(
             }
         }
 
-        when (step) {
-            1 -> StepEpisodes(
+        when {
+            editing != null -> EpisodePicker(
+                label = jobs.firstOrNull { it.key == editing }?.subtitle ?: editing,
+                offers = offersFor(editing),
+                selected = chosen[editing].orEmpty().toSet(),
+                loading = jobs.firstOrNull { it.key == editing }?.anyLoading == true,
+                onToggle = { id -> toggleChoice(editing, id) },
+                onBestPerSource = { setChoices(editing, bestPerSource(offersFor(editing)).map { it.id }) },
+                onClear = { setChoices(editing, emptyList()) },
+                onDone = { editingKey = "" },
+            )
+
+            step == 1 -> StepEpisodes(
                 seasons = seasons,
                 season = season,
                 onSeason = { season = it },
@@ -232,7 +276,7 @@ fun V3BatchScreen(
                 onNext = { step = 2 },
             )
 
-            2 -> StepSource(
+            step == 2 -> StepSource(
                 pickedCount = picked.size,
                 season = season,
                 source = sourceChoice,
@@ -240,46 +284,30 @@ fun V3BatchScreen(
                 onFetch = {
                     val selected = seasonEps.filter { it.key in picked }
                     selected.forEach { ep -> show?.let { s -> fetchVm.enqueue(s, ep) } }
-                    // Episodes already queued earlier keep their result; only
-                    // stale links are re-resolved, so nothing is fetched twice.
+                    // Episodes already queued keep their result; only stale
+                    // links are re-resolved, so nothing is fetched twice.
                     fetchVm.refreshStale()
                     chosenCsv = ""
                     step = 3
                 },
             )
 
-            3 -> {
-                val resolving = orderedPicked.count { key ->
-                    jobs.firstOrNull { it.key == key }?.anyLoading == true
-                }
-                val readyCount = orderedPicked.count { key ->
-                    jobs.firstOrNull { it.key == key }?.let { job ->
-                        sourceList.any { job.sources[it]?.hasData == true }
-                    } == true
-                }
-                StepLinks(
-                    picked = orderedPicked,
-                    jobs = jobs,
-                    sourceList = sourceList,
-                    sourceChoice = sourceChoice,
-                    onSource = { sourceChoice = it; chosenCsv = "" },
-                    offersFor = { key -> offersFor(key) },
-                    chosen = chosen,
-                    onChoose = { key, id -> setChoice(key, id) },
-                    expanded = expanded,
-                    onExpand = { key -> toggleExpanded(key) },
-                    resolving = resolving,
-                    readyCount = readyCount,
-                    busyKey = busyKey,
-                    onDownload = { items ->
-                        pendingItems = items
-                        step = 4
-                    },
-                )
-            }
+            step == 3 -> StepEpisodeList(
+                picked = orderedPicked,
+                jobs = jobs,
+                offersFor = { key -> offersFor(key) },
+                chosen = chosen,
+                totalDownloads = downloadItems.size,
+                onOpen = { key -> editingKey = key },
+                onNext = {
+                    pendingItems = downloadItems
+                    pendingKeys = orderedPicked.filter { !chosen[it].isNullOrEmpty() }
+                    step = 4
+                },
+            )
 
-            4 -> StepSubtitles(
-                count = pendingItems.size,
+            step == 4 -> StepSubtitles(
+                count = pendingKeys.size,
                 state = subLangsState,
                 rows = subRows,
                 subsOn = subsOn,
@@ -293,10 +321,9 @@ fun V3BatchScreen(
                 scope = subsScope,
                 onScope = { subsScope = it },
                 onDownload = {
-                    val keys = pendingItems.map { it.first }
                     fetchVm.startMany(pendingItems)
                     if (subsOn && subsPicked.isNotEmpty()) {
-                        vm.downloadSubtitles(keys, subsPicked.toList(), batchSubtitleSources(subsScope))
+                        vm.downloadSubtitles(pendingKeys, subsPicked.toList(), batchSubtitleSources(subsScope))
                         subsSummary = subsPicked.joinToString(", ") { it.uppercase() }
                     } else {
                         subsSummary = ""
@@ -306,8 +333,13 @@ fun V3BatchScreen(
                 },
             )
 
-            else -> StepDone(
-                count = queuedCount,
+            else -> StepProgress(
+                keys = pendingKeys,
+                labels = orderedPicked.associateWith { key ->
+                    jobs.firstOrNull { it.key == key }?.subtitle ?: key
+                },
+                tasks = tasks,
+                queued = queuedCount,
                 subs = subsSummary,
                 onDownloads = onOpenDownloads,
                 onBack = onBack,
@@ -424,9 +456,9 @@ private fun StepSource(
                     modifier = Modifier.padding(top = V3Space.sm),
                 )
                 Text(
-                    "Pick where the links should come from. Sources differ: the next step lists " +
-                        "every quality each one returned with its real file size, so you can take " +
-                        "the best file per episode.",
+                    "Pick where the links should come from. Sources differ, so the next screen lists " +
+                        "each episode's options with real file sizes — open an episode and tick every " +
+                        "source you want it from.",
                     style = V3Type.caption,
                     color = c.textSecondary,
                     modifier = Modifier.padding(top = V3Space.xs, bottom = V3Space.md),
@@ -436,7 +468,7 @@ private fun StepSource(
                 Column(verticalArrangement = Arrangement.spacedBy(V3Space.xs)) {
                     SourceOption(
                         label = "Any source — best available",
-                        detail = "Every source is checked and its qualities are shown together",
+                        detail = "Every source is checked; per episode you pick what to download",
                         selected = source == "any",
                         onClick = { onSource("any") },
                     )
@@ -495,219 +527,188 @@ private fun SourceOption(label: String, detail: String, selected: Boolean, onCli
 }
 
 @Composable
-private fun StepLinks(
+private fun StepEpisodeList(
     picked: List<String>,
-    jobs: List<com.nedal.cinejoyremote.presentation.FetchJob>,
-    sourceList: List<String>,
-    sourceChoice: String,
-    onSource: (String) -> Unit,
+    jobs: List<FetchJob>,
     offersFor: (String) -> List<BatchOffer>,
-    chosen: Map<String, String>,
-    onChoose: (String, String) -> Unit,
-    expanded: Set<String>,
-    onExpand: (String) -> Unit,
-    resolving: Int,
-    readyCount: Int,
-    busyKey: String?,
-    onDownload: (List<Pair<String, Map<String, String>>>) -> Unit,
+    chosen: Map<String, List<String>>,
+    totalDownloads: Int,
+    onOpen: (String) -> Unit,
+    onNext: () -> Unit,
 ) {
     val c = v3
-    val items = picked.mapNotNull { key ->
-        val offer = offersFor(key).firstOrNull { it.id == chosen[key] } ?: return@mapNotNull null
-        key to offer.opts
-    }
+    val withChoice = picked.count { chosen[it].orEmpty().isNotEmpty() }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = V3Space.gutter)) {
             Text(
-                when {
-                    resolving > 0 -> "$readyCount ready · $resolving still resolving"
-                    else -> "$readyCount of ${picked.size} resolved"
-                },
+                "$withChoice of ${picked.size} episodes have a source",
                 style = V3Type.itemTitle,
                 color = c.text,
                 modifier = Modifier.padding(top = V3Space.sm),
             )
             Text(
-                "Qualities are real: the biggest listed is the best file that source returned. " +
-                    "Pick one per episode, then download them all at once.",
+                "Tap an episode to open its sources. Tick more than one and it downloads once per " +
+                    "source — each file keeps its own quality and size.",
                 style = V3Type.caption,
                 color = c.textSecondary,
                 modifier = Modifier.padding(top = V3Space.xs, bottom = V3Space.sm),
             )
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(V3Space.sm),
-            ) {
-                V3Pill(
-                    label = "All sources",
-                    selected = sourceChoice == "any",
-                    onClick = { onSource("any") },
-                )
-                FetchJob.SOURCE_KEYS.forEach { key ->
-                    V3Pill(
-                        label = FetchJob.SOURCE_LABELS[key] ?: key,
-                        selected = sourceChoice == key,
-                        onClick = { onSource(key) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(V3Space.sm))
         }
         V3Divider()
         LazyColumn(Modifier.weight(1f)) {
             items(picked, key = { it }) { key ->
                 val job = jobs.firstOrNull { it.key == key }
                 val offers = offersFor(key)
-                val shown = if (key in expanded) offers else offers.take(4)
-                EpisodeOffers(
-                    key = key,
-                    job = job,
-                    offers = shown,
-                    totalOffers = offers.size,
-                    selectedId = chosen[key],
-                    busy = busyKey == key,
-                    expanded = key in expanded,
-                    onExpand = { onExpand(key) },
-                    onChoose = { id -> onChoose(key, id) },
-                )
+                val chosenOffers = offers.filter { it.id in chosen[key].orEmpty() }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpen(key) }
+                        .padding(horizontal = V3Space.gutter, vertical = V3Space.sm),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            job?.subtitle ?: key,
+                            style = V3Type.itemTitle,
+                            color = c.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            when {
+                                offers.isNotEmpty() -> "${offers.size} options"
+                                job?.anyLoading == true -> "resolving…"
+                                else -> "no links"
+                            },
+                            style = V3Type.caption12,
+                            color = when {
+                                offers.isNotEmpty() -> c.textSecondary
+                                job?.anyLoading == true -> c.accent
+                                else -> c.error
+                            },
+                        )
+                    }
+                    Text(
+                        if (chosenOffers.isEmpty()) "No source chosen — tap to pick"
+                        else chosenOffers.joinToString("  +  ") {
+                            "${it.sourceLabel} ${it.label} · ${it.sizeLabel ?: "size unknown"}"
+                        },
+                        style = V3Type.caption,
+                        color = if (chosenOffers.isEmpty()) c.textTertiary else c.success,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                V3Divider()
             }
         }
         FooterButton(
             label = when {
-                items.isEmpty() -> "Pick a quality for at least one episode"
-                else -> "Next — subtitles (${items.size})"
+                totalDownloads == 0 -> "Choose a source for at least one episode"
+                else -> "Next — subtitles ($totalDownloads download${if (totalDownloads == 1) "" else "s"})"
             },
-            enabled = items.isNotEmpty(),
-            onClick = { onDownload(items) },
+            enabled = totalDownloads > 0,
+            onClick = onNext,
         )
     }
 }
 
 @Composable
-private fun EpisodeOffers(
-    key: String,
-    job: com.nedal.cinejoyremote.presentation.FetchJob?,
+private fun EpisodePicker(
+    label: String,
     offers: List<BatchOffer>,
-    totalOffers: Int,
-    selectedId: String?,
-    busy: Boolean,
-    expanded: Boolean,
-    onExpand: () -> Unit,
-    onChoose: (String) -> Unit,
+    selected: Set<String>,
+    loading: Boolean,
+    onToggle: (String) -> Unit,
+    onBestPerSource: () -> Unit,
+    onClear: () -> Unit,
+    onDone: () -> Unit,
 ) {
     val c = v3
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = V3Space.gutter, vertical = V3Space.sm),
-        verticalArrangement = Arrangement.spacedBy(V3Space.xs),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    job?.subtitle ?: key,
-                    style = V3Type.itemTitle,
-                    color = c.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    when {
-                        offers.isNotEmpty() -> "$totalOffers option${if (totalOffers == 1) "" else "s"}"
-                        job?.anyLoading == true -> "Resolving links…"
-                        else -> "No links found for this episode"
-                    },
-                    style = V3Type.caption12,
-                    color = when {
-                        offers.isNotEmpty() -> c.success
-                        job?.anyLoading == true -> c.accent
-                        else -> c.error
-                    },
-                )
-            }
-            if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = c.accent)
-        }
-        offers.forEach { offer ->
-            val on = offer.id == selectedId
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(V3Radius.sm))
-                    .background(if (on) c.accent.copy(alpha = 0.14f) else c.surface)
-                    .clickable { onChoose(offer.id) }
-                    .padding(horizontal = V3Space.sm, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = on, onClick = null)
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        offer.sourceLabel + " · " + offer.label,
-                        style = V3Type.body14,
-                        color = c.text,
-                    )
-                    Text(
-                        listOfNotNull(offer.server, offer.sizeLabel ?: "size unknown")
-                            .joinToString(" · "),
-                        style = V3Type.caption12,
-                        color = c.textTertiary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = V3Space.gutter)) {
+            Text(
+                label,
+                style = V3Type.itemTitle,
+                color = c.text,
+                modifier = Modifier.padding(top = V3Space.sm),
+            )
+            Text(
+                "Tick every source you want this episode from. Each tick is a separate download " +
+                    "with its own quality and size; nothing is shared between them.",
+                style = V3Type.caption,
+                color = c.textSecondary,
+                modifier = Modifier.padding(top = V3Space.xs),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                TextButton(onClick = onBestPerSource, enabled = offers.isNotEmpty()) {
+                    Text("Best of each source", style = V3Type.caption, color = c.activeText)
+                }
+                TextButton(onClick = onClear, enabled = selected.isNotEmpty()) {
+                    Text("Clear", style = V3Type.caption, color = c.textSecondary)
                 }
             }
         }
-        if (totalOffers > offers.size) {
-            TextButton(onClick = onExpand) {
-                Text(
-                    if (expanded) "Show fewer" else "Show ${totalOffers - offers.size} more",
-                    style = V3Type.caption,
-                    color = c.activeText,
-                )
+        V3Divider()
+        if (offers.isEmpty()) {
+            Column(
+                Modifier.weight(1f).fillMaxWidth().padding(V3Space.gutter),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = c.accent)
+                    Spacer(Modifier.height(V3Space.sm))
+                    Text("Resolving this episode's links…", style = V3Type.caption, color = c.textSecondary)
+                } else {
+                    Text("No links found for this episode.", style = V3Type.body14, color = c.error)
+                    Text(
+                        "Go back and try another source, or refresh from the sand-clock screen.",
+                        style = V3Type.caption12,
+                        color = c.textTertiary,
+                        modifier = Modifier.padding(top = V3Space.xs),
+                    )
+                }
+            }
+        } else {
+            LazyColumn(Modifier.weight(1f)) {
+                items(offers, key = { it.id }) { offer ->
+                    val on = offer.id in selected
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(if (on) c.accent.copy(alpha = 0.12f) else c.background)
+                            .clickable { onToggle(offer.id) }
+                            .padding(horizontal = V3Space.md, vertical = V3Space.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = on, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${offer.sourceLabel} · ${offer.label}",
+                                style = V3Type.body14,
+                                color = c.text,
+                            )
+                            Text(
+                                listOfNotNull(offer.server, offer.sizeLabel ?: "size unknown")
+                                    .joinToString(" · "),
+                                style = V3Type.caption12,
+                                color = c.textTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
             }
         }
-        V3Divider()
-    }
-}
-
-@Composable
-private fun StepDone(count: Int, subs: String, onDownloads: () -> Unit, onBack: () -> Unit) {
-    val c = v3
-    Column(
-        Modifier.fillMaxSize().padding(V3Space.gutter),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(Icons.Rounded.CheckCircle, null, tint = c.success, modifier = Modifier.size(52.dp))
-        Spacer(Modifier.height(V3Space.md))
-        Text(
-            "$count episode${if (count == 1) "" else "s"} queued on the PC",
-            style = V3Type.sectionTitle,
-            color = c.text,
+        FooterButton(
+            label = if (selected.isEmpty()) "Done — no source" else "Done (${selected.size} selected)",
+            enabled = true,
+            onClick = onDone,
         )
-        Text(
-            "Each one keeps the source and quality chosen here. The PC downloads them in order; " +
-                "progress is on the Downloads tab.",
-            style = V3Type.body14,
-            color = c.textSecondary,
-            modifier = Modifier.padding(top = V3Space.sm),
-        )
-        if (subs.isNotBlank()) {
-            Text(
-                "Subtitles ($subs) are swept in the background for these same episodes — " +
-                    "the Activity tab reports when they finish and they are published next to every video.",
-                style = V3Type.caption,
-                color = c.success,
-                modifier = Modifier.padding(top = V3Space.sm),
-            )
-        }
-        Spacer(Modifier.height(V3Space.lg))
-        Button(onClick = onDownloads, shape = RoundedCornerShape(V3Radius.sm), modifier = Modifier.fillMaxWidth().height(44.dp)) {
-            Icon(Icons.Rounded.Download, null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(V3Space.sm))
-            Text("Open Downloads", style = V3Type.chip)
-        }
-        Spacer(Modifier.height(V3Space.sm))
-        OutlinedButton(onClick = onBack, shape = RoundedCornerShape(V3Radius.sm), modifier = Modifier.fillMaxWidth().height(44.dp)) {
-            Text("Back to the title", style = V3Type.chip)
-        }
     }
 }
 
@@ -826,6 +827,158 @@ private fun StepSubtitles(
     }
 }
 
+@Composable
+private fun StepProgress(
+    keys: List<String>,
+    labels: Map<String, String>,
+    tasks: List<DownloadTask>,
+    queued: Int,
+    subs: String,
+    onDownloads: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val c = v3
+    val mine = tasks.filter { it.episodeKey in keys }
+    val done = mine.count { it.state == "done" }
+    val errors = mine.count { it.state == "error" }
+    val active = mine.count { it.state in listOf("queued", "resolving", "downloading", "stopping") }
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = V3Space.gutter)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.CheckCircle, null, tint = c.success, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(V3Space.sm))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "$queued download${if (queued == 1) "" else "s"} queued",
+                        style = V3Type.itemTitle,
+                        color = c.text,
+                    )
+                    Text(
+                        buildList {
+                            if (active > 0) add("$active active")
+                            if (done > 0) add("$done done")
+                            if (errors > 0) add("$errors failed")
+                            if (isEmpty()) add("waiting for the PC")
+                        }.joinToString(" · "),
+                        style = V3Type.caption,
+                        color = if (errors > 0) c.error else c.textSecondary,
+                    )
+                }
+            }
+            if (subs.isNotBlank()) {
+                Text(
+                    "Subtitles ($subs) are sweeping on the PC for these episodes — the Activity tab " +
+                        "reports when they finish and they are published next to every video.",
+                    style = V3Type.caption12,
+                    color = c.success,
+                    modifier = Modifier.padding(top = V3Space.xs),
+                )
+            }
+            Spacer(Modifier.height(V3Space.sm))
+        }
+        V3Divider()
+        LazyColumn(Modifier.weight(1f)) {
+            items(keys, key = { "p-$it" }) { key ->
+                val epTasks = mine.filter { it.episodeKey == key }
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = V3Space.gutter, vertical = V3Space.sm),
+                    verticalArrangement = Arrangement.spacedBy(V3Space.xs),
+                ) {
+                    Text(
+                        labels[key] ?: key,
+                        style = V3Type.itemTitle,
+                        color = c.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (epTasks.isEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = c.accent)
+                            Spacer(Modifier.width(V3Space.sm))
+                            Text("Waiting for the PC…", style = V3Type.caption12, color = c.textTertiary)
+                        }
+                    }
+                    epTasks.forEach { task -> TaskRow(task) }
+                }
+                V3Divider()
+            }
+        }
+        Column {
+            V3Divider()
+            Button(
+                onClick = onDownloads,
+                shape = RoundedCornerShape(V3Radius.sm),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = V3Space.gutter).padding(top = V3Space.gutter).height(46.dp),
+            ) {
+                Icon(Icons.Rounded.Download, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(V3Space.sm))
+                Text("Open Downloads", style = V3Type.chip)
+            }
+            OutlinedButton(
+                onClick = onBack,
+                shape = RoundedCornerShape(V3Radius.sm),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = V3Space.gutter).padding(vertical = V3Space.sm).height(46.dp),
+            ) {
+                Text("Back to the title", style = V3Type.chip)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskRow(task: DownloadTask) {
+    val c = v3
+    val accent = when (task.state) {
+        "done" -> c.success
+        "error" -> c.error
+        "queued", "resolving", "downloading", "stopping" -> c.accent
+        else -> c.textTertiary
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                listOfNotNull(
+                    task.source?.uppercase() ?: "PC",
+                    task.quality ?: "auto",
+                ).joinToString(" · "),
+                style = V3Type.caption,
+                color = c.text,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                task.state.replaceFirstChar { it.uppercase() } +
+                    (task.percent?.let { " · ${"%.0f".format(it)}%" } ?: ""),
+                style = V3Type.caption12,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Text(
+            buildList {
+                val dl = fmtBytes(task.downloaded)
+                val total = fmtBytes(task.total)
+                if (dl != null && total != null) add("$dl of $total") else total?.let { add(it) }
+                task.speed?.let { add("${fmtBytes(it)}/s") }
+                task.eta?.let { add(it) }
+            }.joinToString(" · ").ifBlank { "starting…" },
+            style = V3Type.caption12,
+            color = c.textTertiary,
+        )
+        task.percent?.let { pct ->
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { (pct / 100.0).toFloat().coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+                color = accent,
+                trackColor = c.surface,
+            )
+        }
+        task.lastErr?.takeIf { task.state == "error" }?.let {
+            Text(it, style = V3Type.caption12, color = c.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 // "all" means both subtitle providers, the same scope the title picker sends.
 private fun batchSubtitleSources(scope: String): List<String> = when (scope) {
     "cinejoy" -> listOf("cinejoy")
@@ -833,18 +986,30 @@ private fun batchSubtitleSources(scope: String): List<String> = when (scope) {
     else -> listOf("cinejoy", "atlantic")
 }
 
+private fun bestPerSource(offers: List<BatchOffer>): List<BatchOffer> {
+    val seen = mutableSetOf<String>()
+    return bestFirst(offers).filter { seen.add(it.source) }
+}
+
+private fun fmtBytes(bytes: Long?): String? {
+    val n = bytes ?: return null
+    return when {
+        n >= (1L shl 30) -> "%.1f GB".format(n / (1L shl 30).toDouble())
+        n >= (1L shl 20) -> "%.0f MB".format(n / (1L shl 20).toDouble())
+        n >= (1L shl 10) -> "${n / (1L shl 10)} KB"
+        else -> "$n B"
+    }
+}
+
 @Composable
 private fun FooterButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    val c = v3
-    Column {
-        V3Divider()
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            shape = RoundedCornerShape(V3Radius.sm),
-            modifier = Modifier.fillMaxWidth().padding(V3Space.gutter).height(48.dp),
-        ) {
-            Text(label, style = V3Type.chip, fontWeight = FontWeight.SemiBold)
-        }
+    V3Divider()
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(V3Radius.sm),
+        modifier = Modifier.fillMaxWidth().padding(V3Space.gutter).height(48.dp),
+    ) {
+        Text(label, style = V3Type.chip, fontWeight = FontWeight.SemiBold)
     }
 }
