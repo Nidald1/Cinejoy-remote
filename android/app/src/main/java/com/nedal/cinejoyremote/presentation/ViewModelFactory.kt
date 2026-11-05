@@ -21,6 +21,8 @@ class AppViewModelFactory(private val devicesVm: DevicesViewModel) : ViewModelPr
             FetchQueueViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(PcToolsViewModel::class.java) ->
             PcToolsViewModel(devicesVm = devicesVm) as T
+        modelClass.isAssignableFrom(StorageViewModel::class.java) ->
+            StorageViewModel(devicesVm = devicesVm) as T
         modelClass.isAssignableFrom(ConnectionViewModel::class.java) ->
             ConnectionViewModel(devicesVm = devicesVm) as T
         else -> throw IllegalArgumentException("unknown ${modelClass.name}")

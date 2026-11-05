@@ -76,6 +76,7 @@ fun V3SettingsScreen(
     updateVm: UpdateViewModel,
     devicesVm: DevicesViewModel,
     connection: ConnectionViewModel,
+    onOpenStorage: () -> Unit = {},
 ) {
     val c = v3
     val context = LocalContext.current
@@ -133,6 +134,20 @@ fun V3SettingsScreen(
                     onClick = { LibraryStyleController.set(context, l) },
                 )
             }
+        }
+
+        V3SettingsCard("Storage") {
+            Text(
+                "Free space, large files, the folder tree and watched cleanup live on their own screen.",
+                style = V3Type.caption,
+                color = c.textTertiary,
+            )
+            Spacer(Modifier.height(V3Space.sm))
+            OutlinedButton(
+                onClick = onOpenStorage,
+                shape = RoundedCornerShape(V3Radius.sm),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Open storage manager", style = V3Type.chip, color = c.text) }
         }
 
         // --- PC & connection ------------------------------------------------

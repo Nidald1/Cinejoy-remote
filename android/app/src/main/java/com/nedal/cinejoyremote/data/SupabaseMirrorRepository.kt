@@ -5,6 +5,7 @@ import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
 import com.nedal.cinejoyremote.domain.MirrorRepository
+import com.nedal.cinejoyremote.domain.PlaybackState
 import com.nedal.cinejoyremote.domain.RemoteEvent
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
@@ -109,6 +110,15 @@ class SupabaseMirrorRepository(private val client: SupabaseClient) : MirrorRepos
             order("season", Order.ASCENDING)
             order("episode", Order.ASCENDING)
         }.decodeList<EpisodeDto>().map { it.toDomain() }
+    }
+
+    override fun observePlayback(deviceId: String): Flow<List<PlaybackState>> = poll {
+        client.from("cj_media_state").select {
+            filter {
+                eq("user_id", userId())
+                eq("device_id", deviceId)
+            }
+        }.decodeList<PlaybackStateDto>().map { it.toDomain() }
     }
 
     override fun observeEvents(deviceId: String): Flow<List<RemoteEvent>> = poll {

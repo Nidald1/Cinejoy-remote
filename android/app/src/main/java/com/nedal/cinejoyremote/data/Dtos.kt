@@ -4,6 +4,7 @@ import com.nedal.cinejoyremote.domain.Device
 import com.nedal.cinejoyremote.domain.DownloadTask
 import com.nedal.cinejoyremote.domain.Episode
 import com.nedal.cinejoyremote.domain.LibraryShow
+import com.nedal.cinejoyremote.domain.PlaybackState
 import com.nedal.cinejoyremote.domain.RemoteEvent
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -82,6 +83,20 @@ data class EpisodeDto(
 )
 
 @Serializable
+data class PlaybackStateDto(
+    @SerialName("item_key") val itemKey: String,
+    val kind: String = "episode",
+    val title: String = "",
+    @SerialName("show_id") val showId: String = "",
+    val season: Int = 0,
+    val episode: Int = 0,
+    val played: Boolean = false,
+    @SerialName("position_seconds") val positionSeconds: Double = 0.0,
+    @SerialName("runtime_seconds") val runtimeSeconds: Double = 0.0,
+    @SerialName("last_played_at") val lastPlayedAt: String? = null,
+)
+
+@Serializable
 data class RemoteEventDto(
     val id: Long = 0,
     val kind: String = "",
@@ -137,5 +152,11 @@ fun EpisodeDto.toDomain() = Episode(
     runtime = runtime, state = state, downloaded = downloaded, total = total,
     watched = watched, subs = subs, arSubs = arSubs, pubAr = pubAr,
     needsPub = needsPub,
+)
+fun PlaybackStateDto.toDomain() = PlaybackState(
+    itemKey = itemKey, kind = kind, title = title, showId = showId,
+    season = season, episode = episode, played = played,
+    positionSeconds = positionSeconds, runtimeSeconds = runtimeSeconds,
+    lastPlayedAt = lastPlayedAt,
 )
 fun RemoteEventDto.toDomain() = RemoteEvent(id, kind, title, body, createdAt)

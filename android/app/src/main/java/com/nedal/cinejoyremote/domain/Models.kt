@@ -65,6 +65,25 @@ data class Episode(
     val arSubs: Int = 0,
     val pubAr: Int = 0,
     val needsPub: Boolean = false,
+    // Live Jellyfin state, merged by ShowDetailViewModel from cj_media_state.
+    // Kept on Episode so the existing card renders it without a second param.
+    val jellyfinPlayed: Boolean = false,
+    val positionSeconds: Double = 0.0,
+    val runtimeSeconds: Double = 0.0,
+    val jellyfinLastPlayed: String? = null,
+)
+
+data class PlaybackState(
+    val itemKey: String,
+    val kind: String,
+    val title: String,
+    val showId: String,
+    val season: Int,
+    val episode: Int,
+    val played: Boolean,
+    val positionSeconds: Double,
+    val runtimeSeconds: Double,
+    val lastPlayedAt: String? = null,
 )
 
 // A pending Seerr request mirrored by the PC (Notifications screen). The PC

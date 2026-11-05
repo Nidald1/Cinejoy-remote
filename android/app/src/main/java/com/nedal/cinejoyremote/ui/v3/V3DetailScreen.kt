@@ -88,6 +88,7 @@ import com.nedal.cinejoyremote.presentation.SubtitleLinkState
 import com.nedal.cinejoyremote.presentation.defaultSubtitleLangs
 import com.nedal.cinejoyremote.presentation.subtitleSourceLabel
 import com.nedal.cinejoyremote.presentation.subtitleSourcesFor
+import androidx.compose.material.icons.rounded.PlayCircle
 
 // ---------------------------------------------------------------- helpers
 // The source-pane JSON helpers (str/int/bool/arr/heightOf) moved to
@@ -208,6 +209,12 @@ fun V3DetailScreen(
                 val bySeason = episodes.groupBy { it.season }.toSortedMap()
                 val seasons = bySeason.keys.toList()
                 val doneCount = episodes.count { it.state == "done" }
+                val currentEp = episodes
+                    .filter {
+                        it.positionSeconds > 0 && !it.jellyfinPlayed &&
+                            it.positionSeconds < jfRuntime(it)
+                    }
+                    .maxByOrNull { it.jellyfinLastPlayed ?: "" }
                 var chosenSeason by rememberSaveable(s.showId, seasons) {
                     mutableStateOf(seasonMemoryGet(context, s.showId, seasons.firstOrNull() ?: 0))
                 }
@@ -270,6 +277,16 @@ fun V3DetailScreen(
                         if (busy != null) {
                             item(key = "busy") {
                                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = V3Space.gutter).height(3.dp))
+                            }
+                        }
+
+                        // The answer to "which episode am I on?" — the most
+                        // recently played unfinished item, live from Jellyfin.
+                        currentEp?.let { ep ->
+                            item(key = "continue") {
+                                Box(Modifier.padding(horizontal = V3Space.gutter)) {
+                                    V3ContinueCard(ep, isMovie = s.type == "movie")
+                                }
                             }
                         }
 
@@ -1120,6 +1137,71 @@ private fun SeasonSheetVM(
     }
 }
 
+@Composable
+private fun V3ContinueCard(ep: Episode, isMovie: Boolean) {
+    val c = v3
+    val run = jfRuntime(ep)
+    val fraction = if (run > 0) (ep.positionSeconds / run).toFloat().coerceIn(0f, 1f) else 0f
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(V3Radius.card))
+            .background(c.accent.copy(alpha = 0.12f))
+            .padding(V3Space.md),
+        verticalArrangement = Arrangement.spacedBy(V3Space.sm),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.PlayCircle, null, tint = c.activeText, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(V3Space.sm))
+            Text("Continue watching", style = V3Type.itemTitle, color = c.text)
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (isMovie) "Movie" else "S%02dE%02d".format(ep.season, ep.episode),
+                style = V3Type.caption,
+                color = c.activeText,
+            )
+        }
+        Text(
+            ep.name.ifBlank { if (isMovie) "Resume" else "Episode ${ep.episode}" },
+            style = V3Type.body14,
+            color = c.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.fillMaxWidth().height(5.dp),
+            color = c.activeText,
+            trackColor = c.raised,
+        )
+        Text(
+            "${detailClock(ep.positionSeconds)} / ${detailClock(run)} · ${detailRemaining(run - ep.positionSeconds)}",
+            style = V3Type.caption,
+            color = c.textTertiary,
+        )
+    }
+}
+
+private fun jfRuntime(ep: Episode): Double =
+    if (ep.runtimeSeconds > 0) ep.runtimeSeconds else ((ep.runtime ?: 0) * 60).toDouble()
+
+private fun detailClock(seconds: Double): String {
+    val total = seconds.toInt().coerceAtLeast(0)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+private fun detailRemaining(seconds: Double): String {
+    val mins = (seconds / 60).toInt().coerceAtLeast(0)
+    return when {
+        mins <= 0 -> "almost done"
+        mins >= 60 -> "${mins / 60} h ${mins % 60} min left"
+        else -> "$mins min left"
+    }
+}
+
 // ---------------------------------------------------------------- hero
 
 @Composable
@@ -1384,6 +1466,32 @@ private fun V3EpisodeCard(
                     else -> "Not downloaded yet"
                 }
                 Text(sizeText, style = V3Type.caption, color = c.textTertiary)
+                val jfRun = jfRuntime(ep)
+                if (ep.jellyfinPlayed || (ep.positionSeconds > 0 && jfRun > 0)) {
+                    val fraction = if (ep.jellyfinPlayed) 1f else (ep.positionSeconds / jfRun).toFloat().coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        color = if (ep.jellyfinPlayed) c.success else c.activeText,
+                        trackColor = c.surface,
+                    )
+                    Text(
+                        if (ep.jellyfinPlayed) {
+                            (if (isMovie) "" else "S%02dE%02d · ".format(ep.season, ep.episode)) + "watched on Jellyfin"
+                        } else {
+                            buildString {
+                                if (!isMovie) append("S%02dE%02d · ".format(ep.season, ep.episode))
+                                append(detailClock(ep.positionSeconds))
+                                append(" / ")
+                                append(detailClock(jfRun))
+                                append(" · ")
+                                append(detailRemaining(jfRun - ep.positionSeconds))
+                            }
+                        },
+                        style = V3Type.caption,
+                        color = if (ep.jellyfinPlayed) c.success else c.textSecondary,
+                    )
+                }
                 if (ep.total != null && ep.downloaded != null && ep.state != "done") {
                     LinearProgressIndicator(
                         progress = { (ep.downloaded.toFloat() / ep.total.toFloat()).coerceIn(0f, 1f) },

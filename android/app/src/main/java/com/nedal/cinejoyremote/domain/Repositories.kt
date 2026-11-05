@@ -26,6 +26,8 @@ interface MirrorRepository {
     fun observeEvents(deviceId: String): Flow<List<RemoteEvent>>
     // Per-episode mirror for one show: file sizes, state, watched, subtitles.
     fun observeEpisodes(deviceId: String, showId: String): Flow<List<Episode>>
+    // Jellyfin playback mirror (cj_media_state): watched + position per item.
+    fun observePlayback(deviceId: String): Flow<List<PlaybackState>>
     suspend fun sendCommand(deviceId: String, action: String, payload: Map<String, String> = emptyMap()): Result<Unit>
     // Fire a command and wait for the PC's result (source picker, add-link,
     // subtitle ops). Times out after [timeoutMs] with a descriptive error.

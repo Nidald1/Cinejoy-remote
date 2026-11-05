@@ -412,7 +412,25 @@ class ShowDetailViewModel(
     val episodes: StateFlow<List<Episode>> =
         combine(devicesVm.selectedDeviceId, _showId) { d, s -> d to s }
             .flatMapLatest { (d, s) ->
-                if (d == null || s == null) flowOf(emptyList()) else mirror.observeEpisodes(d, s)
+                if (d == null || s == null) {
+                    flowOf(emptyList())
+                } else {
+                    // Jellyfin's live position rides on the episode row so the
+                    // existing card draws the progress line without a new param.
+                    combine(mirror.observeEpisodes(d, s), mirror.observePlayback(d)) { eps, states ->
+                        val byKey = states.associateBy { it.itemKey }
+                        eps.map { ep ->
+                            val p = byKey[ep.key]
+                            if (p == null) ep else ep.copy(
+                                watched = ep.watched || p.played,
+                                jellyfinPlayed = p.played,
+                                positionSeconds = p.positionSeconds,
+                                runtimeSeconds = p.runtimeSeconds,
+                                jellyfinLastPlayed = p.lastPlayedAt,
+                            )
+                        }
+                    }
+                }
             }.catch { emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

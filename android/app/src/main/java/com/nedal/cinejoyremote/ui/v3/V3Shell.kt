@@ -91,6 +91,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
+import androidx.compose.material.icons.rounded.Storage
+import com.nedal.cinejoyremote.presentation.StorageViewModel
 
 /** Entry point of the v3 redesign — wired into MainActivity. */
 @Composable
@@ -297,12 +299,16 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                             "notifications" -> "Notifications"
                             "settings" -> "Settings"
                             "fetch" -> "Fetching"
+                            "storage" -> "Storage"
                             else -> "Library"
                         },
                         online = online,
                         avatarLetter = (signedInEmail?.firstOrNull() ?: '●').uppercaseChar(),
                         onAvatar = { profileOpen = true },
                         actions = {
+                            V3IconAction(Icons.Rounded.Storage, "Storage") {
+                                nav.navigate("storage") { launchSingleTop = true }
+                            }
                             Box {
                                 V3IconAction(Icons.Rounded.HourglassTop, "Fetching") {
                                     nav.navigate("fetch") {
@@ -527,6 +533,10 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                     },
                 )
             }
+            composable("storage") {
+                val storageVm: StorageViewModel = viewModel(factory = factory)
+                V3StorageScreen(storageVm, snackbar)
+            }
             composable("settings") {
                 val pcToolsVm: PcToolsViewModel = viewModel(factory = factory)
                 val connectionVm: ConnectionViewModel = viewModel(factory = factory)
@@ -536,6 +546,9 @@ fun V3MainShell(onSignOut: () -> Unit, authVm: AuthViewModel) {
                     updateVm = updateVm,
                     devicesVm = devicesVm,
                     connection = connectionVm,
+                    onOpenStorage = {
+                        nav.navigate("storage") { launchSingleTop = true }
+                    },
                 )
             }
         }
