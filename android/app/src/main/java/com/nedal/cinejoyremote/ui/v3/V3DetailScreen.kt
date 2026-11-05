@@ -152,6 +152,9 @@ fun V3DetailScreen(
     // Owned here, above the dialogs, so opening the subtitle picker cannot
     // rebuild the episode list and drop the user back at the top.
     val listState = rememberLazyListState()
+    // Title-level subtitle wizard: season → episodes → languages, so a batch is
+    // one press at the top of the screen instead of one visit per episode.
+    var subsWizard by remember { mutableStateOf(false) }
 
     LaunchedEffect(error) { error?.let { msg -> snackbar.showSnackbar(msg); vm.clearError() } }
     LaunchedEffect(notice) { notice?.let { msg -> snackbar.showSnackbar(msg); vm.clearNotice() } }
@@ -422,6 +425,34 @@ fun V3DetailScreen(
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = v3.text)
             }
             Spacer(Modifier.weight(1f))
+            if (episodes.isNotEmpty()) {
+                // Sits at the top of the series/movie screen, next to the fetch
+                // icon, so subtitles are never something you find per episode.
+                androidx.compose.material3.Surface(
+                    onClick = { subsWizard = true },
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.Black.copy(alpha = 0.55f),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Subtitles,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            "Subtitles",
+                            style = V3Type.caption12,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -457,6 +488,21 @@ fun V3DetailScreen(
             bodyColor = cc.textSecondary,
             dangerColor = cc.error,
             checkColor = cc.text,
+        )
+    }
+
+    // The title-level entry point: ask once for season, episodes and languages.
+    if (subsWizard) {
+        V3SubtitleWizardDialog(
+            show = show,
+            episodes = episodes,
+            state = subLangsState,
+            onLoadLanguages = { key -> vm.loadSubtitleLanguages(key) },
+            onClose = { subsWizard = false; vm.clearSubtitleLanguages() },
+            onDownload = { keys, langs, sources ->
+                subsWizard = false
+                vm.downloadSubtitles(keys, langs, sources)
+            },
         )
     }
 
@@ -688,6 +734,193 @@ private fun V3SubtitleLangReadyDialog(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = c.textSecondary) } },
+    )
+}
+
+// The title-level wizard: pick the season (when there are several), tick the
+// episodes, then the languages. Each ticked episode is fetched on its own — its
+// own season/episode query, its own files — never one list shared between them.
+@Composable
+private fun V3SubtitleWizardDialog(
+    show: LibraryShow?,
+    episodes: List<Episode>,
+    state: SubtitleLangState,
+    onLoadLanguages: (String) -> Unit,
+    onClose: () -> Unit,
+    onDownload: (List<String>, List<String>, List<String>) -> Unit,
+) {
+    val c = v3
+    val seasons = episodes.map { it.season }.distinct().sorted()
+    var season by remember(show?.showId) { mutableStateOf(seasons.firstOrNull() ?: 0) }
+    val seasonEps = episodes.filter { it.season == season }.sortedBy { it.episode }
+    var picked by remember(season) { mutableStateOf(setOfNotNull(seasonEps.firstOrNull()?.key)) }
+    val ready = state as? SubtitleLangState.Ready
+    val firstKey = seasonEps.firstOrNull { it.key in picked }?.key ?: seasonEps.firstOrNull()?.key
+    var scope by remember { mutableStateOf("all") }
+    val rows = if (scope == "all") ready?.languages.orEmpty() else ready?.bySource?.get(scope).orEmpty()
+    var selected by remember(firstKey) { mutableStateOf(defaultSubtitleLangs(rows)) }
+    // Availability is episode-specific, so it is reloaded whenever the first
+    // ticked episode changes; the counts always describe that episode.
+    LaunchedEffect(firstKey) { firstKey?.let(onLoadLanguages) }
+    LaunchedEffect(ready?.key) {
+        if (ready != null && ready.languages.isNotEmpty()) selected = defaultSubtitleLangs(ready.languages)
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = c.sheet,
+        title = { Text("Download subtitles", color = c.text) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(V3Space.xs),
+            ) {
+                Text(show?.title ?: "This title", style = V3Type.chip, color = c.activeText)
+                if (seasons.size > 1) {
+                    Text("Season", style = V3Type.chip, color = c.text, modifier = Modifier.padding(top = V3Space.sm))
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(V3Space.xs),
+                    ) {
+                        seasons.forEach { s ->
+                            TextButton(onClick = { season = s }) {
+                                Text(
+                                    if (s <= 0) "Specials" else "Season $s",
+                                    style = V3Type.caption12,
+                                    color = if (s == season) c.activeText else c.textSecondary,
+                                    fontWeight = if (s == season) FontWeight.Bold else FontWeight.Normal,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (seasonEps.size > 1) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = V3Space.sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Episodes (${picked.size} of ${seasonEps.size})",
+                            style = V3Type.chip,
+                            color = c.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { picked = seasonEps.map { it.key }.toSet() }) {
+                            Text("All", style = V3Type.caption12, color = c.textSecondary)
+                        }
+                        TextButton(onClick = { picked = emptySet() }) {
+                            Text("None", style = V3Type.caption12, color = c.textSecondary)
+                        }
+                    }
+                    seasonEps.forEach { ep ->
+                        val on = ep.key in picked
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { picked = if (on) picked - ep.key else picked + ep.key },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = on,
+                                onCheckedChange = { tick ->
+                                    picked = if (tick) picked + ep.key else picked - ep.key
+                                },
+                            )
+                            Text(
+                                "E${ep.episode}" + (if (ep.name.isBlank()) "" else " · ${ep.name}"),
+                                style = V3Type.caption,
+                                color = c.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = c.divider, modifier = Modifier.padding(vertical = V3Space.sm))
+                val firstEp = seasonEps.firstOrNull { it.key == firstKey }
+                Text(
+                    "Every episode gets its own subtitles." +
+                        if (seasonEps.size > 1 && firstEp != null) " Counts below are for E${firstEp.episode}." else "",
+                    style = V3Type.caption12,
+                    color = c.textTertiary,
+                )
+                when {
+                    state is SubtitleLangState.Loading -> Text(
+                        "Asking the PC which subtitles exist…",
+                        style = V3Type.caption,
+                        color = c.textSecondary,
+                    )
+                    state is SubtitleLangState.Failed -> Text(state.message, style = V3Type.caption, color = c.error)
+                    ready != null -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                            listOf("all", "cinejoy", "atlantic").forEach { option ->
+                                TextButton(onClick = { scope = option }) {
+                                    Text(
+                                        subtitleSourceLabel(option),
+                                        style = V3Type.caption12,
+                                        color = if (scope == option) c.activeText else c.textSecondary,
+                                        fontWeight = if (scope == option) FontWeight.Bold else FontWeight.Normal,
+                                    )
+                                }
+                            }
+                        }
+                        rows.forEach { lang ->
+                            val checked = lang.code in selected
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    selected = if (checked) selected - lang.code else selected + lang.code
+                                },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { on ->
+                                        selected = if (on) selected + lang.code else selected - lang.code
+                                    },
+                                )
+                                Text(
+                                    if (lang.name.isBlank()) lang.code else lang.name,
+                                    style = V3Type.caption,
+                                    color = c.text,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("${lang.count} available", style = V3Type.caption12, color = c.textSecondary)
+                                    if (lang.existing > 0) {
+                                        Text("${lang.existing} downloaded", style = V3Type.caption12, color = c.textTertiary)
+                                    }
+                                }
+                            }
+                        }
+                        if (rows.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(V3Space.xs)) {
+                                TextButton(onClick = { selected = rows.map { it.code }.toSet() }) {
+                                    Text("All", style = V3Type.caption, color = c.textSecondary)
+                                }
+                                TextButton(onClick = { selected = emptySet() }) {
+                                    Text("None", style = V3Type.caption, color = c.textSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val canGo = selected.isNotEmpty() && picked.isNotEmpty() && ready != null
+            TextButton(
+                enabled = canGo,
+                onClick = {
+                    val keys = seasonEps.map { it.key }.filter { it in picked }.ifEmpty { listOfNotNull(firstKey) }
+                    onDownload(keys, selected.toList(), subtitleSourcesFor(scope))
+                },
+            ) {
+                Text(
+                    if (!canGo) "Download" else "Download (${selected.size} langs · ${picked.size} eps)",
+                    color = if (canGo) c.activeText else c.textTertiary,
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel", color = c.textSecondary) } },
     )
 }
 
